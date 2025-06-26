@@ -1,21 +1,29 @@
-name: Upload Python Package to PyPI
+name: Release and Upload to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'  # triggers on tags like v0.1.0, v1.2.3, etc.
 
 jobs:
-  deploy:
+  release:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check out code
+    - name: Checkout code
       uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12'
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Release ${{ github.ref_name }}
+        generate_release_notes: true
 
     - name: Install build tools
       run: |
@@ -25,8 +33,16 @@ jobs:
     - name: Build package
       run: python -m build
 
-    - name: Publish to PyPI
+    - name: Upload release artifacts
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/*.tar.gz
+          dist/*.whl
+
+    - name: Upload to PyPI
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: twine upload dist/*
+      run: |
+        twine upload dist/*

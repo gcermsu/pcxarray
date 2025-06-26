@@ -1,4 +1,7 @@
 # `pcxarray`
+[![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 A Python package for easy querying and access to Microsoft Planetary Computer Data Catalogs using geopandas and xarray.
 
 ## Features
