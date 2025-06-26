@@ -20,16 +20,7 @@ dependencies = [
     "rasterio",
     "rioxarray",
     "tqdm",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "black",
-    "flake8",
-    "mypy",
-    "ipython",
-    "jupyter",
+    "xarray",
 ]
 
 [build-system]
