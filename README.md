@@ -1,5 +1,5 @@
 # `pcxarray`
-A Python package for easy querying and access to Microsoft Planetary Computer data using xarray and geospatial tools.
+A Python package for easy querying and access to Microsoft Planetary Computer Data Catalogs using geopandas and xarray.
 
 ## Features
 - Query Microsoft Planetary Computer STAC API using shapely geometries
@@ -9,10 +9,18 @@ A Python package for easy querying and access to Microsoft Planetary Computer da
 
 ## Installation
 
+`pcxarray` can be installed via pip.
+
 ```bash
-git clone https://github.com/DakotaHester/pcxarray.git
+python -m pip install pcxarray
+```
+
+Alternatively, you can install the development version directly from GitHub:
+
+```bash
+git clone https://github.com/gcermsu/pcxarray
 cd pcxarray
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 ## Usage
@@ -28,25 +36,29 @@ states_gdf = load_census_shapefile(level="state")
 
 # Select a state (e.g., Mississippi)
 ms_gdf = states_gdf[states_gdf['STUSPS'] == 'MS']
+ms_gdf = ms_gdf.to_crs(epsg=3814) # Reproject to a projected CRS (e.g., EPSG:3814 for Mississippi)
 
 # Create a grid over the state
 grid_gdf = create_grid(
     ms_gdf.iloc[0].geometry,
     crs=ms_gdf.crs,
-    cell_size=1000
+    cell_size=1000 # each cell will be 1000 meters square (units depend on the CRS)
 )
+selected_geom = grid_gdf.iloc[10000].geometry # Select a single geometry for demonstration
 
 # Query NAIP imagery for a grid cell
 items_gdf = pc_query(
     collections='naip',
-    geometry=grid_gdf.iloc[0].geometry,
+    geometry=selected_geom,
     crs=grid_gdf.crs,
     datetime='2023'
 )
 
-# Download and load NAIP data as an xarray DataArray
+# Download and load NAIP data as an xarray DataArray - imagery is clipped to the 
+# geometry of the given geometry, and a mosaic is created if the geometry spans 
+# multiple indiviudual items.
 imagery = prepare_data(
-    geometry=grid_gdf.iloc[0].geometry,
+    geometry=selected_geom,
     crs=grid_gdf.crs,
     items_gdf=items_gdf,
     target_resolution=1.0
@@ -55,7 +67,7 @@ imagery = prepare_data(
 # Or combine query and load in one step
 imagery = query_and_prepare(
     collections='naip',
-    geometry=grid_gdf.iloc[0].geometry,
+    geometry=selected_geom,
     crs=grid_gdf.crs,
     datetime='2023',
     target_resolution=1.0

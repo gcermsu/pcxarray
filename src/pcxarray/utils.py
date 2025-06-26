@@ -13,7 +13,7 @@ from tqdm import tqdm
 def create_grid(
     polygon: Polygon, 
     crs: Union[CRS, str], 
-    cell_size: int = 10,  
+    cell_size: int = 1000,  
     enable_progress_bars: bool = False,
     clip_to_polygon: bool = True,
 ) -> gpd.GeoDataFrame:
@@ -27,7 +27,7 @@ def create_grid(
     crs : Union[pyproj.CRS, str]
         The coordinate reference system for the output GeoDataFrame.
     cell_size : int, optional
-        The size of each grid cell in the units of the CRS (default is 10).
+        The size of each grid cell along each side in the units of the CRS (default is 1000).
     enable_progress_bars : bool, optional
         Whether to display progress bars during grid creation and filtering (default is False).
     clip_to_polygon : bool, optional
