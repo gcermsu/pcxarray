@@ -10,9 +10,11 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from .utils import _flatten_dict
 from .cache import cache
+from joblib import expires_after
 from typing import Optional, List, Dict, Any, Union
 
 
+@cache(cache_validation_callback=expires_after(minutes=15))
 def safe_pc_search(
     search_kwargs: Dict[str, Any],
     timeout: float = 120.0
@@ -58,6 +60,7 @@ def safe_pc_search(
 
 
 
+@cache(cache_validation_callback=expires_after(minutes=15))
 def pc_query(
     collections: Union[str, List[str]],
     geometry: shapely.geometry.base.BaseGeometry,
@@ -149,7 +152,8 @@ def pc_query(
     if 'properties.datetime' in items_gdf.columns:
         items_gdf['properties.datetime'] = pd.to_datetime(items_gdf['properties.datetime'])
         # round to milliseconds for compatibility with netcdf/zarr
-        items_gdf['properties.datetime'] = items_gdf['properties.datetime'].dt.round('ms')
+        items_gdf['properties.datetime'] = [t.tz_localize(None) for t in items_gdf['properties.datetime'].dt.round('ms')]
+        items_gdf['properties.datetime'] = items_gdf['properties.datetime'].astype('datetime64[ms]')
     
     return items_gdf
 

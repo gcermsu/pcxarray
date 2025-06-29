@@ -1,4 +1,5 @@
 from typing import Optional
+from warnings import warn
 from shapely.geometry.base import BaseGeometry
 import geopandas as gpd
 import xarray as xr
@@ -104,6 +105,9 @@ def read_single_item(
     
     if bands is not None and all(isinstance(band, str) for band in bands):
         selected_columns = [f'assets.{band}.href' for band in bands if f'assets.{band}.href' in item_gs.index]
+        missing_bands = [band for band in bands if f'assets.{band}.href' not in item_gs.index]
+        if missing_bands:
+            warn(f"Some requested bands are not available in the item: {missing_bands}. Available bands will be loaded instead.")
     else:
         selected_columns = [
             col for col in item_gs.index \

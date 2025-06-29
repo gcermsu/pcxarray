@@ -10,6 +10,7 @@ from rasterio.enums import Resampling
 from tqdm import tqdm
 from shapely.ops import transform
 from shapely.geometry.base import BaseGeometry
+import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -186,7 +187,8 @@ def prepare_data(
             else:
                 datetime = pd.to_datetime(datetime)
             # round to milliseconds for compatibility with netcdf/zarr
-            datetime = datetime.round('ms')
+            datetime = datetime.round('ms').tz_localize(None)
+            datetime = np.datetime64(datetime)
         
         image = image.expand_dims(time=[datetime])
     
@@ -316,6 +318,7 @@ def prepare_timeseries(
     resampling_method: Resampling = Resampling.bilinear,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
+    ignore_time_component: bool = True,
     chunks: Optional[Dict[str, int]] = None,
     max_workers: int = 1,
     enable_progress_bar: bool = True,
@@ -348,6 +351,8 @@ def prepare_timeseries(
         Resampling method to use (default is Resampling.bilinear).
     time_col : str, optional
         Column name for datetime in items_gdf (default is 'properties.datetime').
+    ignore_time_component : bool, optional
+        If True, ignore the time component and only use the date (default is True).
     time_format_str : str, optional
         Format string for parsing datetime values (default is None, uses pandas default).
     chunks : dict, optional
@@ -364,6 +369,20 @@ def prepare_timeseries(
     xarray.DataArray
         The prepared time series raster data as an xarray DataArray with a time dimension.
     """
+    
+    # chunk handling
+    if chunks is not None and isinstance(chunks, Dict):
+        # need to ensure we don't chunk by band or time dimensions when they don't exist yet
+        chunks_no_time = {k: v for k, v in chunks.items() if k != 'time'}
+        chunks_no_band_time = {k: v for k, v in chunks_no_time.items() if k != 'band'}
+    
+    if time_col not in items_gdf.columns:
+        raise ValueError(f"Column '{time_col}' not found in items_gdf. Please provide a valid time column.")
+    items_gdf = items_gdf.sort_values(by=time_col)
+    
+    if ignore_time_component:
+        items_gdf[time_col] = items_gdf[time_col].dt.date
+    
     if max_workers == 1:
         das = []
         for _, group in tqdm(
@@ -384,9 +403,11 @@ def prepare_timeseries(
                 enable_time_dim=True,
                 time_col= time_col,
                 time_format_str=time_format_str,
-                chunks=chunks,
+                chunks=chunks_no_band_time,
                 **rioxarray_kwargs,
             )
+            if chunks is not None:
+                da = da.chunk(chunks_no_time)
 
             das.append(da)
     
@@ -405,7 +426,7 @@ def prepare_timeseries(
             enable_time_dim=True,
             time_col= time_col,
             time_format_str=time_format_str,
-            chunks=chunks,
+            chunks=chunks_no_band_time,
             **rioxarray_kwargs,           
         )
         
@@ -426,7 +447,7 @@ def prepare_timeseries(
                     try:
                         da = future.result()
                         if chunks is not None:
-                            da = da.chunk(chunks)
+                            da = da.chunk(chunks_no_time)
                         das.append(da)
                     except Exception as e:
                         print(f"Error processing group: {e}")
