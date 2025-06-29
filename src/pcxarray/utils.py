@@ -19,7 +19,11 @@ def create_grid(
     clip_to_polygon: bool = True,
 ) -> gpd.GeoDataFrame:
     """
-    Create a grid of square polygons over a given polygon geometry.
+    Generate a regular grid of square polygons covering a given input polygon.
+
+    The grid is aligned to the bounding box of the input polygon and consists of
+    square cells of the specified size. Optionally, only grid cells that intersect
+    the input polygon are retained, and the cells can be clipped to the polygon boundary.
 
     Parameters
     ----------
@@ -68,30 +72,35 @@ def load_census_shapefile(
     verify: bool = True
 ) -> gpd.GeoDataFrame:
     """
-    Download and load a US Census TIGER shapefile for states or counties.
+    Download and load a US Census TIGER shapefile for states, counties, or ZIP Code Tabulation Areas (ZCTA).
+
+    The shapefile is downloaded from the US Census Bureau TIGER/Line website, extracted,
+    and loaded as a GeoDataFrame. The function is cached to avoid repeated downloads.
 
     Parameters
     ----------
     level : {'state', 'county', 'zcta'}, optional
-        Which shapefile to download: 'state', 'county', or 'zcta' (ZIP Code 
-        Tabulation Area). Default is 'state'.
+        Which shapefile to download: 'state', 'county', or 'zcta' (ZIP Code Tabulation Area).
+        Default is 'state'.
     verify : bool, optional
-        Whether to verify the downloaded file's integrity. Do not set to False
+        Whether to verify the downloaded file's SSL certificate. Do not set to False
         in production code. Default is True.
 
     Returns
     -------
     geopandas.GeoDataFrame
-        The loaded shapefile as a GeoDataFrame.
+        The loaded shapefile as a GeoDataFrame with geometries in WGS84 (EPSG:4326).
 
     Raises
     ------
     ValueError
-        If the level argument is not 'state' or 'county'.
-    FileNotFoundError
-        If the .shp file is not found in the extracted archive.
+        If the level argument is not one of the allowed values.
+    requests.HTTPError
+        If the download fails due to network or server issues.
+    zipfile.BadZipFile
+        If the downloaded file is not a valid ZIP archive.
     AssertionError
-        If more than one .shp file is found in the archive.
+        If the archive does not contain exactly one .shp file.
     """
     urls = {
         "state": "https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip",
@@ -99,7 +108,7 @@ def load_census_shapefile(
         "zcta": "https://www2.census.gov/geo/tiger/TIGER2024/ZCTA520/tl_2024_us_zcta520.zip"
     }
     if level not in urls:
-        raise ValueError("level must be 'state' or 'county'")
+        raise ValueError(f"level must be one of {list(urls.keys())}, got '{level}'")
 
     url = urls[level]
 
@@ -131,7 +140,10 @@ def load_census_shapefile(
 
 def _flatten_dict(d, parent_key='', sep='.'): 
     """
-    Recursively flattens a nested dictionary, concatenating keys with a separator.
+    Recursively flatten a nested dictionary, concatenating keys with a separator.
+
+    Nested keys are joined with the specified separator to produce a flat dictionary
+    where each key represents the path to the value in the original nested structure.
 
     Parameters
     ----------

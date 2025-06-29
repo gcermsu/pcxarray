@@ -9,6 +9,7 @@ from warnings import warn
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from .utils import _flatten_dict
+from .cache import cache
 from typing import Optional, List, Dict, Any, Union
 
 
@@ -68,30 +69,46 @@ def pc_query(
     """
     Query the Planetary Computer STAC API and return results as a GeoDataFrame.
 
+    This function searches the Planetary Computer STAC catalog for items matching
+    the specified criteria. The input geometry is transformed to WGS84 for the query,
+    and results are returned in either WGS84 or the original input CRS.
+
     Parameters
     ----------
     collections : str or list of str
-        Collection(s) to search.
+        Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
-        Area of interest geometry.
+        Area of interest geometry for spatial filtering.
     crs : Union[CRS, str], optional
         Coordinate reference system of the input geometry (default is 4326).
     datetime : str, optional
-        Date/time range for the query (default is '2000-01-01/2025-01-01').
+        Date/time range for temporal filtering in ISO 8601 format or interval
+        (default is '2000-01-01/2025-01-01').
     return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
-    query_kwargs : dict, optional
-        Additional query parameters to pass to the search.
+        If True, return results in WGS84 (EPSG:4326). If False, return in the 
+        input CRS (default is False).
+    **query_kwargs : dict, optional
+        Additional query parameters to pass to the STAC search (e.g., 'query' for
+        property filtering, 'limit' for result count limits).
 
     Returns
     -------
     geopandas.GeoDataFrame
-        GeoDataFrame of the query results.
+        GeoDataFrame containing the query results with flattened STAC item properties.
+        Contains a 'geometry' column with item footprints and additional columns for
+        item metadata. The 'properties.datetime' column is converted to pandas datetime
+        if present.
 
-    Raises
-    ------
-    Warning
-        If no items are found for the given query.
+    Warns
+    -----
+    UserWarning
+        If no items are found for the given query criteria.
+
+    Notes
+    -----
+    - The function automatically handles CRS transformation between the input CRS and WGS84
+    - STAC item properties are flattened using dot notation (e.g., 'properties.datetime')
+    - Datetime values are rounded to milliseconds for netCDF/Zarr compatibility
     """
     transformer = Transformer.from_crs(
         crs,
@@ -131,6 +148,8 @@ def pc_query(
     # set datetime column if it exists
     if 'properties.datetime' in items_gdf.columns:
         items_gdf['properties.datetime'] = pd.to_datetime(items_gdf['properties.datetime'])
+        # round to milliseconds for compatibility with netcdf/zarr
+        items_gdf['properties.datetime'] = items_gdf['properties.datetime'].dt.round('ms')
     
     return items_gdf
 

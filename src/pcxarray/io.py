@@ -1,4 +1,3 @@
-
 from typing import Optional
 from shapely.geometry.base import BaseGeometry
 import geopandas as gpd
@@ -11,38 +10,38 @@ from typing import List, Dict, Any, Union
 
 def load_from_url(
     url: str,
-    geometry: Optional[BaseGeometry] = None,
     bands: Optional[List[int]] = None,
+    geometry: Optional[BaseGeometry] = None,
     crs: Union[CRS, str] = 4326,
     compute: bool = False,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
-    
     """
-    Load a raster dataset from a URL, optionally clipping to a geometry and selecting bands.
+    Load a raster dataset from a URL and return it as an xarray DataArray.
+
+    This function signs the provided URL using the Planetary Computer, opens the raster
+    using rioxarray, optionally selects bands, and clips to a geometry if provided.
+    The raster is returned in its original CRS, but can be clipped using the provided CRS.
 
     Parameters
     ----------
     url : str
-        The URL of the raster dataset.
-    masked : bool, optional
-        Whether to mask the raster data (default is False).
-    chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
-    geometry : shapely.geometry.base.BaseGeometry, optional
-        Geometry to clip the raster data to (default is None).
+        The URL of the raster dataset to load (will be signed if needed).
     bands : list of int, optional
-        List of band indices to select (default is None, which selects all bands).
+        List of band indices to select; selects all bands if None.
+    geometry : shapely.geometry.base.BaseGeometry, optional
+        Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
     crs : Union[CRS, str], optional
-        Coordinate reference system for the output (default is 4326).
-    compute: bool, optional
-        Whether to compute the DataArray immediately (default is False, which returns a lazy DataArray
-    **rioxarray_kwargs: dict, optional
-        Additional keyword arguments to pass to `rioxarray.open_rasterio`.
+        Coordinate reference system for clipping (default: 4326). Does not reproject the raster.
+    compute : bool, optional
+        If True, compute and return an in-memory DataArray; otherwise return a lazy DataArray.
+    **rioxarray_kwargs : dict, optional
+        Additional keyword arguments passed to ``rioxarray.open_rasterio``.
+
     Returns
     -------
     xarray.DataArray
-        The loaded raster data as an xarray DataArray.
+        The loaded (and optionally clipped) raster data.
     """
     
     signed_url = planetary_computer.sign(url)
@@ -65,11 +64,37 @@ def load_from_url(
 
 def read_single_item(
     item_gs: gpd.GeoSeries,
-    geometry: Optional[BaseGeometry] = None,
     bands: Optional[List[Union[str, int]]] = None,
+    geometry: Optional[BaseGeometry] = None,
     crs: Union[CRS, str] = 4326,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
-) -> Union[xr.DataArray, tuple]:
+) -> xr.DataArray:
+    """
+    Read a single STAC item into an xarray DataArray, selecting and concatenating bands as needed.
+
+    This function identifies the appropriate asset URLs from a STAC item (GeoSeries),
+    loads each band as a DataArray, reprojects/resamples as needed, and concatenates
+    them along the 'band' dimension. If only one band is selected, returns a single DataArray.
+
+    Parameters
+    ----------
+    item_gs : geopandas.GeoSeries
+        A STAC item record with asset hrefs and metadata.
+    bands : list of str or int, optional
+        Band names or indices to select; if strings, must match asset keys. If None, all valid bands are loaded.
+    geometry : shapely.geometry.base.BaseGeometry, optional
+        Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
+    crs : Union[CRS, str], optional
+        Output coordinate reference system for clipping (default: 4326). Does not reproject the raster.
+    **rioxarray_kwargs : dict, optional
+        Additional keyword arguments passed to ``rioxarray.open_rasterio``.
+
+    Returns
+    -------
+    xarray.DataArray
+        If only one band is selected, returns a DataArray; if multiple bands, returns a 
+        concatenated DataArray along the 'band' dimension.
+    """
     
     ignored_assets = [
         'assets.visual.href', # RGB composite found in S2-l2a collections

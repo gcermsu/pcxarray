@@ -11,7 +11,7 @@ from tqdm import tqdm
 from shapely.ops import transform
 from shapely.geometry.base import BaseGeometry
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .query import pc_query
 from .io import read_single_item
@@ -25,7 +25,7 @@ def prepare_data(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'max',
+    merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
@@ -36,40 +36,55 @@ def prepare_data(
     """
     Prepare and merge raster data from Planetary Computer query results.
 
+    This function selects the minimum set of STAC items needed to cover a given geometry,
+    reads and mosaics raster tiles, and handles reprojection, resampling, and merging.
+    Items are selected using a greedy algorithm to minimize the number of tiles while
+    ensuring complete coverage. When a single item fully covers the geometry, no merging
+    is performed for efficiency.
+
     Parameters
     ----------
+    items_gdf : geopandas.GeoDataFrame
+        GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
-        Area of interest geometry.
+        Area of interest geometry in the target CRS.
     crs : Union[CRS, str], optional
         Coordinate reference system for the output (default is 4326).
-    items_gdf : geopandas.GeoDataFrame
-        GeoDataFrame of items to process.
-    masked : bool, optional
-        Whether to mask the raster data (default is False).
-    chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
+    bands : list of str or int, optional
+        List of band names or indices to select; if None, all valid bands are loaded.
     target_resolution : float, optional
-        Target resolution for the output raster (default is None).
+        Target pixel size for the output raster in units of the CRS. If None, uses 
+        the native resolution of the first item (default is None).
     all_touched : bool, optional
-        Whether to include all pixels touched by the geometry (default is False).
+        Whether to include all pixels touched by the geometry during final clipping 
+        (default is False).
     merge_method : str, optional
-        Method to use when merging arrays (default is 'max').
+        Method to use when merging overlapping arrays. Options include 'first', 'last', 
+        'min', 'max', 'mean', 'sum' (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use (default is Resampling.bilinear).
-    enable_progress_bar : bool, optional
-        Whether to display a progress bar during merging (default is False).
+        Resampling method to use for reprojection (default is Resampling.bilinear).
     enable_time_dim : bool, optional
-        Whether to enable a datetime dimension in the output (default is False).
+        If True, add a time dimension to the output. All selected items must have 
+        the same datetime value (default is False).
     time_col : str, optional
         Column name for datetime in items_gdf (default is 'properties.datetime').
     time_format_str : str, optional
-        Format string for parsing datetime values (default is None, which uses pandas default).
-    **rioxarray_kwargs: dict, optional
-        Additional keyword arguments to pass to `rioxarray.open_rasterio`.
+        Format string for parsing datetime values (default is None, uses pandas default).
+    enable_progress_bar : bool, optional
+        Whether to display a progress bar during tile merging (default is False).
+    **rioxarray_kwargs : dict, optional
+        Additional keyword arguments to pass to rioxarray.open_rasterio.
+
     Returns
     -------
     xarray.DataArray
-        The prepared raster data as an xarray DataArray.
+        The prepared raster data as an xarray DataArray, optionally with a time dimension.
+
+    Raises
+    ------
+    ValueError
+        If enable_time_dim is True but time_col is not found in items_gdf, or if
+        selected items have different datetime values when enable_time_dim is True.
     """
     
     transformer = Transformer.from_crs(
@@ -85,7 +100,7 @@ def prepare_data(
     items_gdf['percent_overlap'] = items_gdf.geometry.apply(lambda x: x.intersection(geom_84).area / geom_84.area)
     items_full_overlap = items_gdf[items_gdf['percent_overlap'] == 1.0]
 
-    if len(items_full_overlap) > 1: # single item, no need to merge
+    if len(items_full_overlap) >= 1: # single item, no need to merge
         
         image = read_single_item(
             item_gs=items_full_overlap.iloc[0],
@@ -154,17 +169,24 @@ def prepare_data(
     if enable_time_dim:
         if time_col not in items_gdf.columns:
             raise ValueError(f"Column '{time_col}' not found in items_gdf.")
-        datetimes = [item_series[time_col] for item_series in selected_items]
-        # if datetimes are not all the same, raise an error
-        if len(set(datetimes)) != 1:
-            raise ValueError(f"All items must have the same '{time_col}' value to enable datetime dimension.")
         
-        datetime = datetimes[0]
+        if len(items_full_overlap) >= 1:
+            datetime = items_full_overlap.iloc[0][time_col]
+        else:
+            datetimes = [item_series[time_col] for item_series in selected_items]
+            # if datetimes are not all the same, raise an error
+            if len(set(datetimes)) != 1:
+                raise ValueError(f"All items must have the same '{time_col}' value to enable datetime dimension.")
+            
+            datetime = datetimes[0]
+        
         if isinstance(datetime, str):
             if time_format_str is not None:
                 datetime = pd.to_datetime(datetime, format=time_format_str)
             else:
                 datetime = pd.to_datetime(datetime)
+            # round to milliseconds for compatibility with netcdf/zarr
+            datetime = datetime.round('ms')
         
         image = image.expand_dims(time=[datetime])
     
@@ -190,39 +212,66 @@ def query_and_prepare(
     return_items: bool = False,
     query_kwargs: Optional[Dict[str, Any]] = None,
     rioxarray_kwargs: Optional[Dict[str, Any]] = None
-) -> Union[gpd.GeoDataFrame, tuple]:
+) -> Union[xr.DataArray, tuple]:
     """
     Query the Planetary Computer and prepare raster data in a single step.
+
+    This function combines a STAC API query and raster preparation pipeline. It queries
+    the Planetary Computer for items matching the given geometry, date range, and collections,
+    then reads, merges, and processes the raster data. Optionally returns the items GeoDataFrame.
 
     Parameters
     ----------
     collections : str or list of str
-        Collection(s) to search.
+        Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry.
     crs : Union[CRS, str], optional
         Coordinate reference system for the input/output (default is 4326).
     datetime : str, optional
-        Date/time range for the query (default is '2000-01-01/2025-01-01').
-    query_kwargs : dict, optional
-        Additional query parameters to pass to the search.
+        Date/time range for the query in ISO 8601 format or interval
+        (default is '2000-01-01/2025-01-01').
     return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
-    masked : bool, optional
-        Whether to mask the raster data (default is False).
-    chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
+        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS
+        (default is False).
+    bands : list of str or int, optional
+        List of band names or indices to select; if None, all valid bands are loaded.
     target_resolution : float, optional
-        Target resolution for the output raster (default is None).
+        Target pixel size for the output raster in units of the CRS
+        (default is None, uses native resolution).
     all_touched : bool, optional
-        Whether to include all pixels touched by the geometry (default is False).
+        Whether to include all pixels touched by the geometry during clipping
+        (default is False).
+    merge_method : str, optional
+        Method to use when merging overlapping arrays. Options include 'first', 'last',
+        'min', 'max', 'mean', 'sum' (default is 'max').
+    resampling_method : rasterio.enums.Resampling, optional
+        Resampling method to use for reprojection (default is Resampling.bilinear).
+    enable_time_dim : bool, optional
+        If True, add a time dimension to the output (default is False).
+    time_col : str, optional
+        Column name for datetime in items_gdf (default is 'properties.datetime').
+    time_format_str : str, optional
+        Format string for parsing datetime values (default is None, uses pandas default).
+    enable_progress_bar : bool, optional
+        Whether to display a progress bar during merging (default is False).
     return_items : bool, optional
         If True, also return the items GeoDataFrame (default is False).
+    query_kwargs : dict, optional
+        Additional query parameters to pass to the STAC search.
+    rioxarray_kwargs : dict, optional
+        Additional keyword arguments to pass to rioxarray.open_rasterio.
 
     Returns
     -------
     xarray.DataArray or tuple
-        The prepared raster data, and optionally the items GeoDataFrame.
+        The prepared raster data. If return_items is True, returns a tuple of
+        (DataArray, GeoDataFrame).
+
+    Notes
+    -----
+    This is a convenience function that combines pc_query() and prepare_data().
+    For more control over the process, use those functions separately.
     """
     items_gdf = pc_query(
         collections=collections,
@@ -267,11 +316,54 @@ def prepare_timeseries(
     resampling_method: Resampling = Resampling.bilinear,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
+    chunks: Optional[Dict[str, int]] = None,
     max_workers: int = 1,
     enable_progress_bar: bool = True,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
-    
+    """
+    Prepare a time series of raster data from a GeoDataFrame of STAC items.
+
+    This function groups items by time, reads and merges rasters for each timestep,
+    and concatenates them into a single DataArray along the time dimension. Supports
+    parallel processing and chunking for large datasets.
+
+    Parameters
+    ----------
+    items_gdf : geopandas.GeoDataFrame
+        GeoDataFrame of STAC items to process.
+    geometry : shapely.geometry.base.BaseGeometry
+        Area of interest geometry in the target CRS.
+    crs : Union[CRS, str], optional
+        Coordinate reference system for the output (default is 4326).
+    bands : list of str or int, optional
+        List of band names or indices to select; if None, all valid bands are loaded.
+    target_resolution : float, optional
+        Target pixel size for the output raster (default is None, uses native resolution).
+    all_touched : bool, optional
+        Whether to include all pixels touched by the geometry (default is False).
+    merge_method : str, optional
+        Method to use when merging arrays (e.g., 'first', 'last', 'min', 'max').
+    resampling_method : rasterio.enums.Resampling, optional
+        Resampling method to use (default is Resampling.bilinear).
+    time_col : str, optional
+        Column name for datetime in items_gdf (default is 'properties.datetime').
+    time_format_str : str, optional
+        Format string for parsing datetime values (default is None, uses pandas default).
+    chunks : dict, optional
+        Chunking options for dask/xarray (default is None).
+    max_workers : int, optional
+        Number of parallel workers to use (default is 1; -1 uses all CPUs).
+    enable_progress_bar : bool, optional
+        Whether to display a progress bar during processing (default is True).
+    **rioxarray_kwargs : dict, optional
+        Additional keyword arguments to pass to rioxarray.open_rasterio.
+
+    Returns
+    -------
+    xarray.DataArray
+        The prepared time series raster data as an xarray DataArray with a time dimension.
+    """
     if max_workers == 1:
         das = []
         for _, group in tqdm(
@@ -292,6 +384,7 @@ def prepare_timeseries(
                 enable_time_dim=True,
                 time_col= time_col,
                 time_format_str=time_format_str,
+                chunks=chunks,
                 **rioxarray_kwargs,
             )
 
@@ -312,20 +405,36 @@ def prepare_timeseries(
             enable_time_dim=True,
             time_col= time_col,
             time_format_str=time_format_str,
+            chunks=chunks,
             **rioxarray_kwargs,           
         )
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             groups = list(items_gdf.groupby(time_col))
             
-            das = list(
-                tqdm(
-                    executor.map(lambda x: worker(x[1]), groups),
-                    desc="Processing items",
-                    unit="timestep",
-                    total=len(groups),
-                    disable=not enable_progress_bar,
-                )
-            )
+            futures = [executor.submit(worker, group) for _, group in groups]
+            
+            das = []
+            with tqdm(
+                as_completed(futures),
+                desc="Processing items",
+                unit="timestep",
+                total=len(groups),
+                disable=not enable_progress_bar,
+            ) as progress:
+                for future in progress:
+                    try:
+                        da = future.result()
+                        if chunks is not None:
+                            da = da.chunk(chunks)
+                        das.append(da)
+                    except Exception as e:
+                        print(f"Error processing group: {e}")
+                        continue
     
-    return xr.concat(das, dim='time')
+    da = xr.concat(das, dim='time')
+    if chunks is not None:
+        da = da.chunk(chunks)
+        return da.sortby('time').chunk(chunks)
+    
+    return da.sortby('time')
