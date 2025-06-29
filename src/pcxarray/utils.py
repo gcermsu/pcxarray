@@ -1,6 +1,5 @@
 import os
 from tempfile import TemporaryDirectory
-from typing import Literal, Union
 from zipfile import ZipFile
 import geopandas as gpd
 import numpy as np
@@ -9,6 +8,7 @@ import requests
 from shapely.geometry import Polygon
 from shapely import prepare
 from tqdm import tqdm
+from typing import Literal, Union
 
 def create_grid(
     polygon: Polygon, 
@@ -123,7 +123,7 @@ def load_census_shapefile(level: Literal["state", "county"]="state", verify: boo
 
 
 
-def flatten_dict(d, parent_key='', sep='.'): 
+def _flatten_dict(d, parent_key='', sep='.'): 
     """
     Recursively flattens a nested dictionary, concatenating keys with a separator.
 
@@ -145,7 +145,7 @@ def flatten_dict(d, parent_key='', sep='.'):
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            items.extend(_flatten_dict(v, new_key, sep=sep).items())
         else:
             items.append((new_key, v))
     

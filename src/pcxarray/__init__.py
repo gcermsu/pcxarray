@@ -1,4 +1,5 @@
-from .query import pc_query, prepare_data, query_and_prepare
+from .query import pc_query
+from .processing import prepare_timeseries, prepare_data, query_and_prepare
 
 try:
     from importlib.metadata import version
