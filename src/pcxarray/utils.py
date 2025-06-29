@@ -9,6 +9,7 @@ from shapely.geometry import Polygon
 from shapely import prepare
 from tqdm import tqdm
 from typing import Literal, Union
+from .cache import cache
 
 def create_grid(
     polygon: Polygon, 
@@ -61,15 +62,19 @@ def create_grid(
 
 
 
-
-def load_census_shapefile(level: Literal["state", "county"]="state", verify: bool = True) -> gpd.GeoDataFrame:
+@cache
+def load_census_shapefile(
+    level: Literal["state", "county", "zcta"] = "state", 
+    verify: bool = True
+) -> gpd.GeoDataFrame:
     """
     Download and load a US Census TIGER shapefile for states or counties.
 
     Parameters
     ----------
-    level : {'state', 'county'}, optional
-        Which shapefile to download: 'state' or 'county'. Default is 'state'.
+    level : {'state', 'county', 'zcta'}, optional
+        Which shapefile to download: 'state', 'county', or 'zcta' (ZIP Code 
+        Tabulation Area). Default is 'state'.
     verify : bool, optional
         Whether to verify the downloaded file's integrity. Do not set to False
         in production code. Default is True.
@@ -89,8 +94,9 @@ def load_census_shapefile(level: Literal["state", "county"]="state", verify: boo
         If more than one .shp file is found in the archive.
     """
     urls = {
-        "state": "http://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip",
-        "county": "http://www2.census.gov/geo/tiger/TIGER2024/COUNTY/tl_2024_us_county.zip",
+        "state": "https://www2.census.gov/geo/tiger/TIGER2024/STATE/tl_2024_us_state.zip",
+        "county": "https://www2.census.gov/geo/tiger/TIGER2024/COUNTY/tl_2024_us_county.zip",
+        "zcta": "https://www2.census.gov/geo/tiger/TIGER2024/ZCTA520/tl_2024_us_zcta520.zip"
     }
     if level not in urls:
         raise ValueError("level must be 'state' or 'county'")
@@ -101,7 +107,7 @@ def load_census_shapefile(level: Literal["state", "county"]="state", verify: boo
         zip_path = os.path.join(tmpdir, "census.zip")
         
         # Download the zip file
-        with requests.get(url, stream=True, verify=False) as r:
+        with requests.get(url, stream=True, verify=verify) as r:
             r.raise_for_status()
             with open(zip_path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=8192):
