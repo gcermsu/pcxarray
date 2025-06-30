@@ -1,6 +1,7 @@
 from functools import partial
 import os
 from typing import Optional, List, Dict, Any, Union
+from warnings import warn
 import geopandas as gpd
 import pandas as pd
 from pyproj import Transformer, CRS, transform
@@ -24,10 +25,13 @@ def prepare_data(
     geometry: BaseGeometry,
     crs: Union[CRS, str] = 4326,
     bands: Optional[List[Union[str, int]]] = None,
-    target_resolution: Optional[float] = None,
+    target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
     merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
+    reproject_first: bool = False,
+    reproject_num_threads: int = 1,
+    reproject_mem_limit: int = 64,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -64,6 +68,19 @@ def prepare_data(
         'min', 'max', 'mean', 'sum' (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
         Resampling method to use for reprojection (default is Resampling.bilinear).
+    reproject_first : bool, optional
+        If True, reproject and/or resample tiles to the desired resolution/crs 
+        prior to merging tiles when multiple items require merging. This can be 
+        useful for reducing memory footprint when merging large rasters where
+        the target pixel size is much larger (coarser) than the native resolution, 
+        but it may result in a loss of spatial accuracy (default is False).
+    reproject_num_threads: int, optional
+        Number of threads to use for reprojection operations (default is 1, -1 uses
+        all available CPUs).
+    reproject_mem_limit: int, optional
+        Memory limit in MB for reprojection operations. Larger values allow for
+        larger chunks to be processed in parallel, but may increase memory usage
+        (default is 64).
     enable_time_dim : bool, optional
         If True, add a time dimension to the output. All selected items must have 
         the same datetime value (default is False).
@@ -150,28 +167,58 @@ def prepare_data(
             
             if image is None:
                 image = xa
+                if reproject_first: 
+                    if target_resolution is None:
+                        warn(f"reproject_first is True, but target_resolution is None. Using the native resolution of the first item: {image.rio.resolution()}.")
+                        target_resolution = image.rio.resolution()[0]
+                    
+                    # NOTE: In an ideal world, rioxarray's underlying reprojection
+                    # function would support dask arrays for parallel processing 
+                    # and lazy evaluation, but currently it relies on rasterio's
+                    # warp module which is not dask-aware. As such, we have to pass
+                    # in the number of threads and memory limit directly. According
+                    # to the rioxarray documentation (https://corteva.github.io/rioxarray/html/examples/reproject.html)
+                    # odc=geo and pyresample packages offer such functionality, but
+                    # the documentation is relatively scant and unclear as to how
+                    # this is implemented in practice. For now, this is a stopgap,
+                    # but in the future we may want to explore either utilizing
+                    # these packages or implementing our own parallel reprojection
+                    # functionality that utilizes dask for lazy evaluation.                    
+                    
+                    # reproject to target resolution
+                    image = image.rio.reproject(
+                        crs,
+                        resolution=(target_resolution, target_resolution),
+                        resampling=resampling_method,
+                        num_threads=reproject_num_threads,
+                        warp_mem_limit=reproject_mem_limit if reproject_mem_limit > 1 else os.cpu_count(),
+                    )
+
             else:
                 if xa.rio.crs != image.rio.crs or xa.rio.resolution() != image.rio.resolution():
                     xa = xa.rio.reproject(
                         image.rio.crs,
                         resolution=image.rio.resolution(),
                         resampling=resampling_method,
-                        num_threads='ALL_CPUS',
                     )
                 image = merge_arrays([image, xa], method=merge_method)
     
     if image is None:
         raise ValueError("No valid image data could be processed from the selected items.")
     
-    if target_resolution is None:
-        target_resolution = image.rio.resolution()[0]
+    if not reproject_first and (image.rio.crs != crs or image.rio.resolution() != (target_resolution, target_resolution)):
+        if target_resolution is None:
+            target_resolution = image.rio.resolution()[0]
+        
+        image = image.rio.reproject(
+            crs,
+            resolution=(target_resolution, target_resolution),
+            resampling=resampling_method,
+            num_threads=reproject_num_threads,
+            warp_mem_limit=reproject_mem_limit if reproject_mem_limit > 1 else os.cpu_count(),
+        )
     
-    image = image.rio.reproject(
-        resolution=(target_resolution, target_resolution),
-        resampling=resampling_method,
-        dst_crs=crs,
-        num_threads='ALL_CPUS',
-    ).rio.clip([geometry], crs=crs, all_touched=all_touched)
+    image = image.rio.clip([geometry], crs=crs, all_touched=all_touched)
     
     if enable_time_dim:
         if time_col is None:
@@ -218,6 +265,9 @@ def query_and_prepare(
     all_touched: bool = False,
     merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
+    reproject_first: bool = False,
+    reproject_num_threads: int = 1,
+    reproject_mem_limit: int = 64,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -260,6 +310,19 @@ def query_and_prepare(
         'min', 'max', 'mean', 'sum' (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
         Resampling method to use for reprojection (default is Resampling.bilinear).
+    reproject_first : bool, optional
+        If True, reproject and/or resample tiles to the desired resolution/crs prior 
+        to merging tiles when multiple items require merging. This can be useful 
+        for reducing memory footprint when merging large rasters where the target
+        pixel size is much larger (coarser) than the native resolution, but it may
+        result in a loss of spatial accuracy (default is False).
+    reproject_num_threads: int, optional
+        Number of threads to use for reprojection operations (default is 1, -1 uses 
+        all available CPUs).
+    reproject_mem_limit: int, optional
+        Memory limit in MB for reprojection operations. Larger values allow for 
+        larger chunks to be processed in parallel, but may increase memory usage
+        (default is 64).
     enable_time_dim : bool, optional
         If True, add a time dimension to the output (default is False).
     time_col : str, optional
@@ -303,6 +366,9 @@ def query_and_prepare(
         target_resolution=target_resolution,
         merge_method=merge_method,
         resampling_method=resampling_method,
+        reproject_first=reproject_first,
+        reproject_num_threads=reproject_num_threads,
+        reproject_mem_limit=reproject_mem_limit,
         enable_time_dim=enable_time_dim,
         time_col=time_col,
         time_format_str=time_format_str,
@@ -327,6 +393,9 @@ def prepare_timeseries(
     all_touched: bool = False,
     merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
+    reproject_first: bool = False,
+    reproject_num_threads: int = 1,
+    reproject_mem_limit: int = 64,
     time_col: str = 'properties.datetime',
     time_format_str: Optional[str] = None,
     ignore_time_component: bool = True,
@@ -361,6 +430,19 @@ def prepare_timeseries(
         (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
         Resampling method to use for reprojection (default is Resampling.bilinear).
+    reproject_first : bool, optional
+        If True, reproject and/or resample tiles to the desired resolution/crs prior 
+        to merging tiles when multiple items require merging. This can be useful for 
+        reducing memory footprint when merging large rasters where the target pixel 
+        size is much larger (coarser) than the native resolution, but it may result 
+        in a loss of spatial accuracy (default is False).
+    reproject_num_threads: int, optional
+        Number of threads to use for reprojection operations (default is 1, -1 uses
+        all available CPUs).
+    reproject_mem_limit: int, optional
+        Memory limit in MB for reprojection operations. Larger values allow for
+        larger chunks to be processed in parallel, but may increase memory usage
+        (default is 64).
     time_col : str, optional
         Column name for datetime in items_gdf (default is 'properties.datetime').
     ignore_time_component : bool, optional
@@ -414,6 +496,9 @@ def prepare_timeseries(
                 all_touched=all_touched,
                 merge_method=merge_method,
                 resampling_method=resampling_method,
+                reproject_first=reproject_first,
+                reproject_num_threads=reproject_num_threads,
+                reproject_mem_limit=reproject_mem_limit,
                 enable_time_dim=True,
                 time_col= time_col,
                 time_format_str=time_format_str,
@@ -438,6 +523,9 @@ def prepare_timeseries(
             all_touched=all_touched,
             merge_method=merge_method,
             resampling_method=resampling_method,
+            reproject_first=reproject_first,
+            reproject_num_threads=reproject_num_threads,
+            reproject_mem_limit=reproject_mem_limit,
             enable_time_dim=True,
             time_col=time_col,
             time_format_str=time_format_str,
