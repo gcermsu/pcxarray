@@ -101,6 +101,7 @@ def prepare_data(
     items_gdf['percent_overlap'] = items_gdf.geometry.apply(lambda x: x.intersection(geom_84).area / geom_84.area)
     items_full_overlap = items_gdf[items_gdf['percent_overlap'] == 1.0]
 
+    selected_items = []
     if len(items_full_overlap) >= 1: # single item, no need to merge
         
         image = read_single_item(
@@ -155,8 +156,12 @@ def prepare_data(
                         image.rio.crs,
                         resolution=image.rio.resolution(),
                         resampling=resampling_method,
+                        num_threads='ALL_CPUS',
                     )
                 image = merge_arrays([image, xa], method=merge_method)
+    
+    if image is None:
+        raise ValueError("No valid image data could be processed from the selected items.")
     
     if target_resolution is None:
         target_resolution = image.rio.resolution()[0]
@@ -165,15 +170,21 @@ def prepare_data(
         resolution=(target_resolution, target_resolution),
         resampling=resampling_method,
         dst_crs=crs,
+        num_threads='ALL_CPUS',
     ).rio.clip([geometry], crs=crs, all_touched=all_touched)
     
     if enable_time_dim:
-        if time_col not in items_gdf.columns:
-            raise ValueError(f"Column '{time_col}' not found in items_gdf.")
+        if time_col is None:
+            raise ValueError("time_col cannot be None when enable_time_dim is True.")
         
         if len(items_full_overlap) >= 1:
+            if time_col not in items_full_overlap.columns:
+                raise ValueError(f"Column '{time_col}' not found in items_gdf.")
             datetime = items_full_overlap.iloc[0][time_col]
         else:
+            # Check if time_col exists in the first selected item
+            if not selected_items or time_col not in selected_items[0].index:
+                raise ValueError(f"Column '{time_col}' not found in items.")
             datetimes = [item_series[time_col] for item_series in selected_items]
             # if datetimes are not all the same, raise an error
             if len(set(datetimes)) != 1:
@@ -205,7 +216,7 @@ def query_and_prepare(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'max',
+    merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
@@ -246,7 +257,7 @@ def query_and_prepare(
         (default is False).
     merge_method : str, optional
         Method to use when merging overlapping arrays. Options include 'first', 'last',
-        'min', 'max', 'mean', 'sum' (default is 'max').
+        'min', 'max', 'mean', 'sum' (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
         Resampling method to use for reprojection (default is Resampling.bilinear).
     enable_time_dim : bool, optional
@@ -314,9 +325,9 @@ def prepare_timeseries(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'max',
+    merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
-    time_col: Optional[str] = 'properties.datetime',
+    time_col: str = 'properties.datetime',
     time_format_str: Optional[str] = None,
     ignore_time_component: bool = True,
     chunks: Optional[Dict[str, int]] = None,
@@ -346,9 +357,10 @@ def prepare_timeseries(
     all_touched : bool, optional
         Whether to include all pixels touched by the geometry (default is False).
     merge_method : str, optional
-        Method to use when merging arrays (e.g., 'first', 'last', 'min', 'max').
+        Method to use when merging arrays (e.g., 'first', 'last', 'min', 'max', 'mean', 'sum')
+        (default is 'first').
     resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use (default is Resampling.bilinear).
+        Resampling method to use for reprojection (default is Resampling.bilinear).
     time_col : str, optional
         Column name for datetime in items_gdf (default is 'properties.datetime').
     ignore_time_component : bool, optional
@@ -358,7 +370,7 @@ def prepare_timeseries(
     chunks : dict, optional
         Chunking options for dask/xarray (default is None).
     max_workers : int, optional
-        Number of parallel workers to use (default is 1; -1 uses all CPUs).
+        Number of parallel workers to use (default is 1; -1 uses all available CPUs).
     enable_progress_bar : bool, optional
         Whether to display a progress bar during processing (default is True).
     **rioxarray_kwargs : dict, optional
@@ -371,6 +383,8 @@ def prepare_timeseries(
     """
     
     # chunk handling
+    chunks_no_time = None
+    chunks_no_band_time = None
     if chunks is not None and isinstance(chunks, Dict):
         # need to ensure we don't chunk by band or time dimensions when they don't exist yet
         chunks_no_time = {k: v for k, v in chunks.items() if k != 'time'}
@@ -381,7 +395,7 @@ def prepare_timeseries(
     items_gdf = items_gdf.sort_values(by=time_col)
     
     if ignore_time_component:
-        items_gdf[time_col] = items_gdf[time_col].dt.date
+        items_gdf[time_col] = items_gdf[time_col].dt.normalize()
     
     if max_workers == 1:
         das = []
@@ -392,7 +406,7 @@ def prepare_timeseries(
             disable=not enable_progress_bar,
         ):
             da = prepare_data(
-                items_gdf=group,
+                items_gdf=gpd.GeoDataFrame(group),
                 geometry=geometry,
                 crs=crs,
                 bands=bands,
@@ -403,6 +417,7 @@ def prepare_timeseries(
                 enable_time_dim=True,
                 time_col= time_col,
                 time_format_str=time_format_str,
+                enable_progress_bar=False,
                 chunks=chunks_no_band_time,
                 **rioxarray_kwargs,
             )
@@ -413,7 +428,7 @@ def prepare_timeseries(
     
     else:
         if max_workers == -1:
-            max_workers = os.cpu_count()
+            max_workers = os.cpu_count() or 1
         
         worker = partial(prepare_data,
             geometry=geometry,
@@ -424,8 +439,9 @@ def prepare_timeseries(
             merge_method=merge_method,
             resampling_method=resampling_method,
             enable_time_dim=True,
-            time_col= time_col,
+            time_col=time_col,
             time_format_str=time_format_str,
+            enable_progress_bar=False,
             chunks=chunks_no_band_time,
             **rioxarray_kwargs,           
         )
@@ -433,7 +449,7 @@ def prepare_timeseries(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             groups = list(items_gdf.groupby(time_col))
             
-            futures = [executor.submit(worker, group) for _, group in groups]
+            futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group)) for _, group in groups]
             
             das = []
             with tqdm(

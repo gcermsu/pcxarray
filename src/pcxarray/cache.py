@@ -55,5 +55,8 @@ memory = Memory(_cache_dir, verbose=0)
 cache = memory.cache
 """
 Decorator for caching function outputs to disk using joblib.Memory.
+
 Use as @cache above a function to persist its results between runs.
+The cache is stored in a platform-appropriate directory and helps avoid
+repeated expensive operations like downloading data.
 """

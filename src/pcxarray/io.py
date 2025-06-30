@@ -33,9 +33,10 @@ def load_from_url(
     geometry : shapely.geometry.base.BaseGeometry, optional
         Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
     crs : Union[CRS, str], optional
-        Coordinate reference system for clipping (default: 4326). Does not reproject the raster.
+        Coordinate reference system for clipping (default is 4326). Does not reproject the raster.
     compute : bool, optional
-        If True, compute and return an in-memory DataArray; otherwise return a lazy DataArray.
+        If True, compute and return an in-memory DataArray; otherwise return a lazy DataArray
+        (default is False).
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to ``rioxarray.open_rasterio``.
 
@@ -86,7 +87,7 @@ def read_single_item(
     geometry : shapely.geometry.base.BaseGeometry, optional
         Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
     crs : Union[CRS, str], optional
-        Output coordinate reference system for clipping (default: 4326). Does not reproject the raster.
+        Output coordinate reference system for clipping (default is 4326). Does not reproject the raster.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to ``rioxarray.open_rasterio``.
 

@@ -15,7 +15,7 @@ def create_grid(
     polygon: Polygon, 
     crs: Union[CRS, str], 
     cell_size: int = 1000,  
-    enable_progress_bars: bool = False,
+    enable_progress_bar: bool = False,
     clip_to_polygon: bool = True,
 ) -> gpd.GeoDataFrame:
     """
@@ -33,7 +33,7 @@ def create_grid(
         The coordinate reference system for the output GeoDataFrame.
     cell_size : int, optional
         The size of each grid cell along each side in the units of the CRS (default is 1000).
-    enable_progress_bars : bool, optional
+    enable_progress_bar : bool, optional
         Whether to display progress bars during grid creation and filtering (default is False).
     clip_to_polygon : bool, optional
         If True, grid cells will be clipped to the input polygon boundary (default is True).
@@ -51,12 +51,12 @@ def create_grid(
     x_grid, y_grid = np.meshgrid(x_coords, y_coords)
     grid_polygons = [
         Polygon([(x, y), (x + cell_size, y), (x + cell_size, y + cell_size), (x, y + cell_size)])
-        for x, y in tqdm(zip(x_grid.ravel(), y_grid.ravel()), desc="Creating grid polygons", total=x_grid.size, unit="polygons", disable=not enable_progress_bars)
+        for x, y in tqdm(zip(x_grid.ravel(), y_grid.ravel()), desc="Creating grid polygons", total=x_grid.size, unit="polygons", disable=not enable_progress_bar)
     ]
     prepare(polygon)  # Prepare the geometry for faster intersection checks
     
     # Filter polygons that intersect with the geometry
-    grid_polygons = [grid_polygon for grid_polygon in tqdm(grid_polygons, desc="Filtering polygons", unit="polygons", disable=not enable_progress_bars) if polygon.intersects(grid_polygon)]
+    grid_polygons = [grid_polygon for grid_polygon in tqdm(grid_polygons, desc="Filtering polygons", unit="polygons", disable=not enable_progress_bar) if polygon.intersects(grid_polygon)]
     grid_gdf = gpd.GeoDataFrame(geometry=grid_polygons, crs=crs)
     
     if clip_to_polygon:
@@ -80,7 +80,10 @@ def load_census_shapefile(
     Parameters
     ----------
     level : {'state', 'county', 'zcta'}, optional
-        Which shapefile to download: 'state', 'county', or 'zcta' (ZIP Code Tabulation Area).
+        Which shapefile to download. Options are:
+        - 'state': US state boundaries
+        - 'county': US county boundaries  
+        - 'zcta': ZIP Code Tabulation Areas
         Default is 'state'.
     verify : bool, optional
         Whether to verify the downloaded file's SSL certificate. Do not set to False

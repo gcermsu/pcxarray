@@ -1,3 +1,4 @@
+from time import sleep
 import shapely
 from pystac import Item
 import pystac_client
@@ -67,6 +68,7 @@ def pc_query(
     crs: Union[CRS, str] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
     return_in_wgs84: bool = False,
+    max_retries: int = 5,
     **query_kwargs: Optional[Dict[str, Any]],
 ) -> gpd.GeoDataFrame:
     """
@@ -90,6 +92,8 @@ def pc_query(
     return_in_wgs84 : bool, optional
         If True, return results in WGS84 (EPSG:4326). If False, return in the 
         input CRS (default is False).
+    max_retries : int, optional
+        Maximum number of retries for the STAC search in case of failure (default is 5).
     **query_kwargs : dict, optional
         Additional query parameters to pass to the STAC search (e.g., 'query' for
         property filtering, 'limit' for result count limits).
@@ -129,7 +133,20 @@ def pc_query(
         "intersects": aoi,
         "datetime": str(datetime), # cast datetime to string
     } | (query_kwargs or {})  # Merge with any additional query parameters
-    pystac_items = safe_pc_search(query)
+    
+    retries = 0
+    while True:
+        try:
+            # Perform the STAC search with the given query parameters
+            pystac_items = safe_pc_search(query)
+            break  # Exit loop if search is successful
+        except Exception as e:
+            if retries >= max_retries:
+                raise RuntimeError(f"STAC search failed after {max_retries} retries: {type(e).__str__}: {e}") from e
+            
+            warn(f"STAC search failed: {type(e).__str__}: {e}. Retrying ({retries + 1}/{max_retries})...")
+            sleep(2 ** (retries + 1))  # Exponential backoff
+            retries += 1
     
     items = []
     for item in pystac_items:
