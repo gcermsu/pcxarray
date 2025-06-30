@@ -21,7 +21,9 @@ dependencies = [
     "rioxarray",
     "tqdm",
     "xarray",
-    "joblib"
+    "joblib",
+    "odc-geo",
+    "bottleneck"
 ]
 
 [project.urls]

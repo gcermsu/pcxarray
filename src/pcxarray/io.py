@@ -1,3 +1,4 @@
+from time import sleep
 from typing import Optional
 from warnings import warn
 from shapely.geometry.base import BaseGeometry
@@ -7,6 +8,8 @@ import rioxarray as rxr
 from pyproj import CRS
 import planetary_computer
 from typing import List, Dict, Any, Union
+import odc.geo.xr
+from odc.geo.geom import Geometry
 
 
 def load_from_url(
@@ -14,7 +17,10 @@ def load_from_url(
     bands: Optional[List[int]] = None,
     geometry: Optional[BaseGeometry] = None,
     crs: Union[CRS, str] = 4326,
-    compute: bool = False,
+    chunks: Optional[Dict[str, int]] = None,
+    clip_to_geometry: bool = True,
+    all_touched: bool = False,
+    max_retires: int = 5,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
     """
@@ -34,9 +40,6 @@ def load_from_url(
         Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
     crs : Union[CRS, str], optional
         Coordinate reference system for clipping (default is 4326). Does not reproject the raster.
-    compute : bool, optional
-        If True, compute and return an in-memory DataArray; otherwise return a lazy DataArray
-        (default is False).
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to ``rioxarray.open_rasterio``.
 
@@ -46,19 +49,29 @@ def load_from_url(
         The loaded (and optionally clipped) raster data.
     """
     
-    signed_url = planetary_computer.sign(url)
-    
-    da = rxr.open_rasterio(signed_url, **rioxarray_kwargs)
+    for _retries in range(max_retires):
+        try:
+            # Sign the URL with Planetary Computer
+            signed_url = planetary_computer.sign(url)
+            da = rxr.open_rasterio(
+                signed_url,
+                masked=True,
+                chunks=chunks,
+                **rioxarray_kwargs
+            )
+            break  # Exit loop if signing is successful
+        except Exception as e:
+            if _retries < max_retires - 1:
+                warn(f"Retrying signing URL due to error: {e}. Attempt {_retries + 1}/{max_retires}")
+                sleep(2 ** _retries)  # Exponential backoff
+            else:
+                raise RuntimeError(f"Failed to sign URL after {max_retires} attempts: {e}")
     
     if bands is not None:
         da = da.sel(band=bands)
     
-    if geometry is not None: # clip_box and sel are lazy operations, while clip is not
-        da = da.rio.clip_box(*geometry.bounds, crs=crs)
-        da = da.rio.clip([geometry], crs=crs, all_touched=True)
-
-    if compute:
-        return da.compute()
+    if geometry is not None: 
+        da = da.odc.crop(Geometry(geometry, crs=crs), apply_mask=clip_to_geometry, all_touched=all_touched)
         
     return da
 
@@ -69,6 +82,9 @@ def read_single_item(
     bands: Optional[List[Union[str, int]]] = None,
     geometry: Optional[BaseGeometry] = None,
     crs: Union[CRS, str] = 4326,
+    chunks: Optional[Dict[str, int]] = None,
+    clip_to_geometry: bool = True,
+    all_touched: bool = False,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
     """
@@ -126,6 +142,9 @@ def read_single_item(
             geometry=geometry,
             bands=bands if bands is not None and all(isinstance(band, int) for band in bands) else None,
             crs=crs,
+            chunks=chunks,
+            clip_to_geometry=clip_to_geometry,
+            all_touched=all_touched,
             **rioxarray_kwargs
         )
     
@@ -138,6 +157,9 @@ def read_single_item(
             url=url,
             geometry=geometry,
             crs=crs,
+            chunks=chunks,
+            clip_to_geometry=clip_to_geometry,
+            all_touched=all_touched,
             **rioxarray_kwargs,
         )
 
@@ -149,21 +171,21 @@ def read_single_item(
     
     # Resample bands to the smallest pixel resolution
     target_band = min(band_das, key=lambda x: min(abs(x.rio.resolution()[0]), abs(x.rio.resolution()[1])))
+    target_geobox = target_band.odc.geobox
     
     # Reproject bands that don't match the target band's spatial properties
     reprojected_bands = []
     for da in band_das:
-        needs_reprojection = (
-            da.rio.crs != target_band.rio.crs or
-            da.rio.resolution() != target_band.rio.resolution() or
-            da.rio.bounds() != target_band.rio.bounds() or
-            da.rio.transform() != target_band.rio.transform()
-        )
-        
-        if needs_reprojection:
-            reprojected_bands.append(da.rio.reproject_match(target_band))
-        else:
+        if da.odc.geobox == target_geobox:
+            # No reprojection needed
             reprojected_bands.append(da)
+        else:
+            # Reproject to match the target geobox
+            reprojected_da = da.odc.reproject(
+                target_geobox,
+                resampling='nearest',  # Use nearest neighbor for categorical data
+            )
+            reprojected_bands.append(reprojected_da)
     band_das = reprojected_bands
     
     da = xr.concat(band_das, dim='band')

@@ -9,14 +9,131 @@ import xarray as xr
 from rioxarray.merge import merge_arrays
 from rasterio.enums import Resampling
 from tqdm import tqdm
-from shapely.ops import transform
+from shapely.ops import transform, unary_union
 from shapely.geometry.base import BaseGeometry
 import numpy as np
-
+from odc.geo.geobox import GeoBox
+from odc.geo.geom import Geometry
+import odc.geo.xr
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .query import pc_query
 from .io import read_single_item
+
+
+def lazy_merge_array(
+    arrays: List[xr.DataArray], 
+    method: str = 'first',
+    geom: Optional[BaseGeometry] = None,
+    crs: Optional[Union[CRS, str]] = None,
+    resolution: Optional[Union[float, int]] = None,
+    resampling_method: Union[Resampling, str] = 'nearest'
+) -> xr.DataArray:
+    """
+    Merge multiple xarray DataArrays lazily
+    
+    This function reprojects all input arrays to a common geobox and then merges them using
+    the specified method. If geometry, CRS, or resolution are not provided, they are automatically
+    determined from the input arrays using the union of geometries, first CRS found, and minimum
+    resolution respectively. Unlike rioxarray.rio.reproject, this function does not trigger
+    a computation of the dask graph.
+    
+    Parameters
+    ----------
+    arrays : List[xarray.DataArray]
+        List of georeferenced DataArrays to merge from rioxarray
+    method : str, default 'first'
+        Method for merging overlapping pixels. Options are:
+        - 'first': Use first non-NaN value (backward fill)
+        - 'last': Use last non-NaN value (forward fill)  
+        - 'min': Minimum value across arrays
+        - 'max': Maximum value across arrays
+        - 'mean': Mean value across arrays
+        - 'sum': Sum of values across arrays
+        - 'median': Median value across arrays
+    geom : shapely.geometry.base.BaseGeometry, optional
+        Target geometry for the merged array. If None, computed as union of all input array bounds.
+        Must be provided together with crs and resolution, or all three must be None.
+    crs : pyproj.CRS or str, optional
+        Target coordinate reference system. If None, uses CRS from first input array.
+        Must be provided together with geom and resolution, or all three must be None.
+    resolution : float or int, optional
+        Target pixel resolution in CRS units. If None, uses minimum resolution from input arrays.
+        Must be provided together with geom and crs, or all three must be None.
+    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
+        Resampling method for reprojection. Can be Resampling enum or string name
+        (e.g., 'nearest', 'bilinear', 'cubic', etc.) See https://odc-geo.readthedocs.io/en/latest/_api/odc.geo.xr.ODCExtensionDa.reproject.html
+        for all available options.
+        
+    Returns
+    -------
+    xarray.DataArray
+        Merged DataArray reprojected to the common geobox with spatial coordinates
+        and CRS information preserved.
+        
+    Raises
+    ------
+    ValueError
+        If only some of geom, crs, or resolution are provided (must be all or none).
+        If an unknown merge method is specified.
+    UserWarning
+        If multiple CRS are found in input arrays (uses first one found).
+    """
+    
+    # determine the common geobox for reprojection if args not provided
+    if geom is None or crs is None or resolution is None:
+        if sum([geom is None, crs is None, resolution is None]) > 1:
+            raise ValueError("If one of geom, crs, or resolution is None, all must be provided.")
+
+        geoms = [da.rio.transform_bounds() for da in arrays]
+        geom = unary_union(geoms)
+        
+        crs_list = [da.rio.crs for da in arrays]
+        if len(set(crs_list)) > 1:
+            warn(f"Multiple CRSs found in input arrays: {set(crs_list)}. Using the first raster's CRS ({crs_list[0]}).")
+        crs = crs_list[0]  
+
+        resolution = min([min(abs(da.rio.resolution()[0]), abs(da.rio.resolution()[1])) for da in arrays])
+        
+        geobox = GeoBox.from_geopolygon(
+            Geometry(geom, crs=crs),
+            resolution=resolution
+        )
+    
+    else:
+        geobox = GeoBox.from_geopolygon(
+            Geometry(geom, crs=crs),
+            resolution=resolution
+        )
+    
+    if isinstance(resampling_method, Resampling):
+        resampling_method = resampling_method.name.lower()
+    
+    # reproject all arrays to the common geobox
+    arrays = [da.odc.reproject(how=geobox, resampling=resampling_method) for da in arrays]
+    arrays = xr.align(*arrays, join='exact')
+    stacked = xr.concat(arrays, dim='merge_dim')
+    
+    if method == 'first':
+        filled = stacked.bfill(dim='merge_dim')
+        result = filled.isel(merge_dim=0)
+    elif method == 'last':
+        filled = stacked.ffill(dim='merge_dim')
+        result = filled.isel(merge_dim=-1)
+    elif method == 'min':
+        result = stacked.min(dim='merge_dim', skipna=True)
+    elif method == 'max':
+        result = stacked.max(dim='merge_dim', skipna=True)
+    elif method == 'mean':
+        result = stacked.mean(dim='merge_dim', skipna=True)
+    elif method == 'sum':
+        result= stacked.sum(dim='merge_dim', skipna=True)
+    elif method == 'median':
+        result = stacked.median(dim='merge_dim', skipna=True)
+    else:
+        raise ValueError(f"Unknown merge method: {method}")
+    
+    return result
 
 
 
@@ -28,10 +145,8 @@ def prepare_data(
     target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
     merge_method: str = 'first',
-    resampling_method: Resampling = Resampling.bilinear,
-    reproject_first: bool = False,
-    reproject_num_threads: int = 1,
-    reproject_mem_limit: int = 64,
+    resampling_method: Union[Resampling, str] = 'bilinear',
+    chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -105,6 +220,9 @@ def prepare_data(
         selected items have different datetime values when enable_time_dim is True.
     """
     
+    if isinstance(resampling_method, Resampling):
+        resampling_method = resampling_method.name.lower()
+    
     transformer = Transformer.from_crs(
         crs,
         CRS.from_epsg(4326),
@@ -126,6 +244,7 @@ def prepare_data(
             geometry=geometry,
             bands=bands,
             crs=crs,
+            chunks=chunks,
             **rioxarray_kwargs,
         )
         
@@ -154,71 +273,32 @@ def prepare_data(
             items_gdf['percent_overlap'] = items_gdf.geometry.apply(lambda x: x.intersection(remaining_geom).area / remaining_area)
             items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
         
-        image = None
+        das = []
         for item_series in tqdm(selected_items, desc='Merging tiles', unit='tiles', disable=not enable_progress_bar):
             xa = read_single_item(
                 item_gs=item_series,
                 geometry=geometry,
                 bands=bands,
+                chunks=chunks,
+                all_touched=True,
+                clip_to_geometry=False, # Wait to clip until after merging
                 crs=crs,
                 **rioxarray_kwargs,
             )
-            xa = xa.rio.clip([geometry], crs=crs, all_touched=True)
-            
-            if image is None:
-                image = xa
-                if reproject_first: 
-                    if target_resolution is None:
-                        warn(f"reproject_first is True, but target_resolution is None. Using the native resolution of the first item: {image.rio.resolution()}.")
-                        target_resolution = image.rio.resolution()[0]
-                    
-                    # NOTE: In an ideal world, rioxarray's underlying reprojection
-                    # function would support dask arrays for parallel processing 
-                    # and lazy evaluation, but currently it relies on rasterio's
-                    # warp module which is not dask-aware. As such, we have to pass
-                    # in the number of threads and memory limit directly. According
-                    # to the rioxarray documentation (https://corteva.github.io/rioxarray/html/examples/reproject.html)
-                    # odc=geo and pyresample packages offer such functionality, but
-                    # the documentation is relatively scant and unclear as to how
-                    # this is implemented in practice. For now, this is a stopgap,
-                    # but in the future we may want to explore either utilizing
-                    # these packages or implementing our own parallel reprojection
-                    # functionality that utilizes dask for lazy evaluation.                    
-                    
-                    # reproject to target resolution
-                    image = image.rio.reproject(
-                        crs,
-                        resolution=(target_resolution, target_resolution),
-                        resampling=resampling_method,
-                        num_threads=reproject_num_threads,
-                        warp_mem_limit=reproject_mem_limit if reproject_mem_limit > 1 else os.cpu_count(),
-                    )
-
-            else:
-                if xa.rio.crs != image.rio.crs or xa.rio.resolution() != image.rio.resolution():
-                    xa = xa.rio.reproject(
-                        image.rio.crs,
-                        resolution=image.rio.resolution(),
-                        resampling=resampling_method,
-                    )
-                image = merge_arrays([image, xa], method=merge_method)
+            das.append(xa)
     
-    if image is None:
-        raise ValueError("No valid image data could be processed from the selected items.")
-    
-    if not reproject_first and (image.rio.crs != crs or image.rio.resolution() != (target_resolution, target_resolution)):
-        if target_resolution is None:
-            target_resolution = image.rio.resolution()[0]
-        
-        image = image.rio.reproject(
-            crs,
-            resolution=(target_resolution, target_resolution),
-            resampling=resampling_method,
-            num_threads=reproject_num_threads,
-            warp_mem_limit=reproject_mem_limit if reproject_mem_limit > 1 else os.cpu_count(),
-        )
-    
-    image = image.rio.clip([geometry], crs=crs, all_touched=all_touched)
+    da = lazy_merge_array(
+        das,
+        method=merge_method,
+        geom=geometry,
+        crs=crs if crs is not None else das[0].rio.crs,
+        resolution=target_resolution if target_resolution is not None else das[0].rio.resolution()[0],  # assuming square pixels
+        resampling_method=resampling_method,
+    )
+    da = da.odc.crop(Geometry(geometry, crs=crs), apply_mask=True, all_touched=all_touched)
+    # return da
+    if chunks is not None and da.chunks != chunks:
+        da = da.chunk(chunks)
     
     if enable_time_dim:
         if time_col is None:
@@ -248,9 +328,9 @@ def prepare_data(
             datetime = datetime.round('ms').tz_localize(None)
             datetime = np.datetime64(datetime)
         
-        image = image.expand_dims(time=[datetime])
+        da = da.expand_dims(time=[datetime])
     
-    return image
+    return da
 
 
 
@@ -265,9 +345,7 @@ def query_and_prepare(
     all_touched: bool = False,
     merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
-    reproject_first: bool = False,
-    reproject_num_threads: int = 1,
-    reproject_mem_limit: int = 64,
+    chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -366,9 +444,6 @@ def query_and_prepare(
         target_resolution=target_resolution,
         merge_method=merge_method,
         resampling_method=resampling_method,
-        reproject_first=reproject_first,
-        reproject_num_threads=reproject_num_threads,
-        reproject_mem_limit=reproject_mem_limit,
         enable_time_dim=enable_time_dim,
         time_col=time_col,
         time_format_str=time_format_str,
@@ -393,13 +468,10 @@ def prepare_timeseries(
     all_touched: bool = False,
     merge_method: str = 'first',
     resampling_method: Resampling = Resampling.bilinear,
-    reproject_first: bool = False,
-    reproject_num_threads: int = 1,
-    reproject_mem_limit: int = 64,
+    chunks: Optional[Dict[str, int]] = None,
     time_col: str = 'properties.datetime',
     time_format_str: Optional[str] = None,
     ignore_time_component: bool = True,
-    chunks: Optional[Dict[str, int]] = None,
     max_workers: int = 1,
     enable_progress_bar: bool = True,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
@@ -479,11 +551,30 @@ def prepare_timeseries(
     if ignore_time_component:
         items_gdf[time_col] = items_gdf[time_col].dt.normalize()
     
+    # das = []
+    # for _, group in items_gdf.groupby(time_col):
+    #     da = prepare_data(
+    #         items_gdf=gpd.GeoDataFrame(group),
+    #         geometry=geometry,
+    #         crs=crs,
+    #         bands=bands,
+    #         target_resolution=target_resolution,
+    #         all_touched=all_touched,
+    #         merge_method=merge_method,
+    #         resampling_method=resampling_method,
+    #         enable_time_dim=True,
+    #         time_col=time_col,
+    #         time_format_str=time_format_str,
+    #         enable_progress_bar=False,
+    #         chunks=chunks_no_band_time,
+    #         **rioxarray_kwargs,
+    #     )
+    
     if max_workers == 1:
         das = []
         for _, group in tqdm(
             items_gdf.groupby(time_col),
-            desc="Processing items",
+            desc="Processing items" if chunks_no_band_time is None else "Constructing dask computation graph",
             unit="timestep",
             disable=not enable_progress_bar,
         ):
@@ -496,9 +587,6 @@ def prepare_timeseries(
                 all_touched=all_touched,
                 merge_method=merge_method,
                 resampling_method=resampling_method,
-                reproject_first=reproject_first,
-                reproject_num_threads=reproject_num_threads,
-                reproject_mem_limit=reproject_mem_limit,
                 enable_time_dim=True,
                 time_col= time_col,
                 time_format_str=time_format_str,
@@ -523,9 +611,6 @@ def prepare_timeseries(
             all_touched=all_touched,
             merge_method=merge_method,
             resampling_method=resampling_method,
-            reproject_first=reproject_first,
-            reproject_num_threads=reproject_num_threads,
-            reproject_mem_limit=reproject_mem_limit,
             enable_time_dim=True,
             time_col=time_col,
             time_format_str=time_format_str,
@@ -542,7 +627,7 @@ def prepare_timeseries(
             das = []
             with tqdm(
                 as_completed(futures),
-                desc="Processing items",
+                desc="Processing items" if chunks_no_band_time is None else "Constructing dask computation graph",
                 unit="timestep",
                 total=len(groups),
                 disable=not enable_progress_bar,
@@ -557,9 +642,8 @@ def prepare_timeseries(
                         print(f"Error processing group: {e}")
                         continue
     
-    da = xr.concat(das, dim='time')
+    da = xr.concat(das, dim='time').sortby('time')
     if chunks is not None:
-        da = da.chunk(chunks)
-        return da.sortby('time').chunk(chunks)
+        return da.chunk(chunks)
     
-    return da.sortby('time')
+    return da

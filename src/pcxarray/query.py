@@ -15,7 +15,7 @@ from joblib import expires_after
 from typing import Optional, List, Dict, Any, Union
 
 
-@cache(cache_validation_callback=expires_after(minutes=15))
+# @cache(cache_validation_callback=expires_after(minutes=15))
 def safe_pc_search(
     search_kwargs: Dict[str, Any],
     timeout: float = 120.0
