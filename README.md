@@ -1,24 +1,26 @@
-# `pcxarray`
+# pcxarray
 [![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A Python package for easy querying and access to Microsoft Planetary Computer Data Catalogs using geopandas and xarray.
+A Python package for querying, downloading, and processing Microsoft Planetary Computer raster data using GeoPandas and Xarray.
 
 ## Features
 - Query Microsoft Planetary Computer STAC API using shapely geometries
-- Retrieve results as GeoDataFrames for easy inspection and filtering
-- Download and preprocess raster data into xarray DataArrays
+- Retrieve results as GeoDataFrames for inspection, filtering, and spatial analysis
+- Download and mosaic raster data into xarray DataArrays with reprojection and resampling
 - Utilities for creating spatial grids and loading US Census TIGER shapefiles
+- Simple caching of expensive or repeated downloads
+- Designed for integration with Dask, Jupyter, and modern geospatial Python workflows
 
 ## Installation
 
-`pcxarray` can be installed via pip.
+Install from PyPI:
 
 ```bash
 python -m pip install pcxarray
 ```
 
-Alternatively, you can install the development version directly from GitHub:
+Or install the development version from GitHub:
 
 ```bash
 git clone https://github.com/gcermsu/pcxarray
@@ -26,9 +28,9 @@ cd pcxarray
 python -m pip install -e ".[dev]"
 ```
 
-## Usage
+## Quickstart Example
 
-See `naip_demo.ipynb` for a complete example of querying NAIP imagery.
+See [`naip_demo.ipynb`](naip_demo.ipynb) for a complete example of querying and visualizing NAIP imagery.
 
 ```python
 from pcxarray import pc_query, prepare_data, query_and_prepare
@@ -39,17 +41,17 @@ states_gdf = load_census_shapefile(level="state")
 
 # Select a state (e.g., Mississippi)
 ms_gdf = states_gdf[states_gdf['STUSPS'] == 'MS']
-ms_gdf = ms_gdf.to_crs(epsg=3814) # Reproject to a projected CRS (e.g., EPSG:3814 for Mississippi)
+ms_gdf = ms_gdf.to_crs(3814)  # Project to Mississippi Transverse Mercator
 
-# Create a grid over the state
+# Create a 1km grid over the state
 grid_gdf = create_grid(
     ms_gdf.iloc[0].geometry,
     crs=ms_gdf.crs,
-    cell_size=1000 # each cell will be 1000 meters square (units depend on the CRS)
+    cell_size=1000
 )
-selected_geom = grid_gdf.iloc[10000].geometry # Select a single geometry for demonstration
+selected_geom = grid_gdf.iloc[10000].geometry  # Select a single grid cell
 
-# Query NAIP imagery for a grid cell
+# Query NAIP imagery for the selected cell
 items_gdf = pc_query(
     collections='naip',
     geometry=selected_geom,
@@ -57,14 +59,14 @@ items_gdf = pc_query(
     datetime='2023'
 )
 
-# Download and load NAIP data as an xarray DataArray - imagery is clipped to the 
-# geometry of the given geometry, and a mosaic is created if the geometry spans 
-# multiple indiviudual items.
+# Download and load NAIP data as an xarray DataArray
 imagery = prepare_data(
+    items_gdf=items_gdf,
     geometry=selected_geom,
     crs=grid_gdf.crs,
-    items_gdf=items_gdf,
-    target_resolution=1.0
+    target_resolution=1.0,
+    bands=[4, 1, 2],  # NIR, Red, Green
+    merge_method='first'
 )
 
 # Or combine query and load in one step
@@ -73,6 +75,23 @@ imagery = query_and_prepare(
     geometry=selected_geom,
     crs=grid_gdf.crs,
     datetime='2023',
-    target_resolution=1.0
+    target_resolution=1.0,
+    bands=[4, 1, 2]
 )
+
+# Visualize (in Jupyter)
+(imagery / 255.0).plot.imshow()
 ```
+
+## Core Functions
+- `pc_query`: Query the Planetary Computer STAC API and return results as a GeoDataFrame
+- `prepare_data`: Download, mosaic, and preprocess raster data for a given geometry
+- `query_and_prepare`: Convenience function to query and load data in one step
+- `create_grid`: Generate a regular grid of polygons over a region
+- `load_census_shapefile`: Download and load US Census TIGER shapefiles (state, county, ZCTA)
+
+## More Examples
+See [`examples/`](/examples/) for full deomstraations workflows, including grid creation, querying, and visualization.
+
+## Known Issues
+- Inconsistent chunking behavior when passing `bands` dimension in `chunks` dict in `prepare_data`. 

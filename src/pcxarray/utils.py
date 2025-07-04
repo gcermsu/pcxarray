@@ -20,24 +20,24 @@ def create_grid(
 ) -> gpd.GeoDataFrame:
     """
     Generate a regular grid of square polygons covering a given input polygon.
-
+    
     The grid is aligned to the bounding box of the input polygon and consists of
     square cells of the specified size. Optionally, only grid cells that intersect
     the input polygon are retained, and the cells can be clipped to the polygon boundary.
-
+    
     Parameters
     ----------
     polygon : shapely.geometry.Polygon
         The input polygon to cover with a grid.
-    crs : Union[pyproj.CRS, str]
+    crs : pyproj.CRS or str
         The coordinate reference system for the output GeoDataFrame.
-    cell_size : int, optional
-        The size of each grid cell along each side in the units of the CRS (default is 1000).
-    enable_progress_bar : bool, optional
-        Whether to display progress bars during grid creation and filtering (default is False).
-    clip_to_polygon : bool, optional
-        If True, grid cells will be clipped to the input polygon boundary (default is True).
-
+    cell_size : int, default 1000
+        The size of each grid cell along each side in the units of the CRS.
+    enable_progress_bar : bool, default False
+        Whether to display progress bars during grid creation and filtering.
+    clip_to_polygon : bool, default True
+        If True, grid cells will be clipped to the input polygon boundary.
+    
     Returns
     -------
     geopandas.GeoDataFrame
@@ -73,27 +73,25 @@ def load_census_shapefile(
 ) -> gpd.GeoDataFrame:
     """
     Download and load a US Census TIGER shapefile for states, counties, or ZIP Code Tabulation Areas (ZCTA).
-
+    
     The shapefile is downloaded from the US Census Bureau TIGER/Line website, extracted,
     and loaded as a GeoDataFrame. The function is cached to avoid repeated downloads.
-
+    
     Parameters
     ----------
-    level : {'state', 'county', 'zcta'}, optional
+    level : {'state', 'county', 'zcta'}, default 'state'
         Which shapefile to download. Options are:
         - 'state': US state boundaries
-        - 'county': US county boundaries  
+        - 'county': US county boundaries
         - 'zcta': ZIP Code Tabulation Areas
-        Default is 'state'.
-    verify : bool, optional
-        Whether to verify the downloaded file's SSL certificate. Do not set to False
-        in production code. Default is True.
-
+    verify : bool, default True
+        Whether to verify the downloaded file's SSL certificate. Do not set to False in production code.
+    
     Returns
     -------
     geopandas.GeoDataFrame
         The loaded shapefile as a GeoDataFrame with geometries in WGS84 (EPSG:4326).
-
+    
     Raises
     ------
     ValueError
@@ -144,19 +142,19 @@ def load_census_shapefile(
 def _flatten_dict(d, parent_key='', sep='.'): 
     """
     Recursively flatten a nested dictionary, concatenating keys with a separator.
-
+    
     Nested keys are joined with the specified separator to produce a flat dictionary
     where each key represents the path to the value in the original nested structure.
-
+    
     Parameters
     ----------
     d : dict
         The dictionary to flatten.
-    parent_key : str, optional
-        The base key string to prepend to each key (default is '').
-    sep : str, optional
-        Separator to use when concatenating keys (default is '.').
-
+    parent_key : str, default ''
+        The base key string to prepend to each key.
+    sep : str, default '.'
+        Separator to use when concatenating keys.
+    
     Returns
     -------
     dict

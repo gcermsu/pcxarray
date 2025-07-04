@@ -18,28 +18,28 @@ from typing import Optional, List, Dict, Any, Union
 # @cache(cache_validation_callback=expires_after(minutes=15))
 def safe_pc_search(
     search_kwargs: Dict[str, Any],
-    timeout: float = 120.0
+    timeout: float = 300.0
 ) -> List[Item]:
     """
     Perform a STAC search with a wall-clock timeout using a thread.
-
+    
     This function executes a STAC API search in a separate thread and enforces
     a maximum wall-clock timeout. If the search does not complete within the
     specified timeout, a TimeoutError is raised. This is useful for preventing
     long-running or hanging queries from blocking the main process.
-
+    
     Parameters
     ----------
     search_kwargs : dict
         Dictionary of keyword arguments to pass to pystac_client.Client.search.
-    timeout : float, optional
-        Maximum time in seconds to wait for the search to complete (default is 120.0).
-
+    timeout : float, default 300.0
+        Maximum time in seconds to wait for the search to complete.
+    
     Returns
     -------
     list of pystac.Item
         List of STAC items returned by the search.
-
+    
     Raises
     ------
     concurrent.futures.TimeoutError
@@ -73,44 +73,38 @@ def pc_query(
 ) -> gpd.GeoDataFrame:
     """
     Query the Planetary Computer STAC API and return results as a GeoDataFrame.
-
+    
     This function searches the Planetary Computer STAC catalog for items matching
     the specified criteria. The input geometry is transformed to WGS84 for the query,
     and results are returned in either WGS84 or the original input CRS.
-
+    
     Parameters
     ----------
     collections : str or list of str
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry for spatial filtering.
-    crs : Union[CRS, str], optional
-        Coordinate reference system of the input geometry (default is 4326).
-    datetime : str, optional
-        Date/time range for temporal filtering in ISO 8601 format or interval
-        (default is '2000-01-01/2025-01-01').
-    return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). If False, return in the 
-        input CRS (default is False).
-    max_retries : int, optional
-        Maximum number of retries for the STAC search in case of failure (default is 5).
+    crs : pyproj.CRS or str, default 4326
+        Coordinate reference system of the input geometry.
+    datetime : str, default '2000-01-01/2025-01-01'
+        Date/time range for temporal filtering in ISO 8601 format or interval.
+    return_in_wgs84 : bool, default False
+        If True, return results in WGS84 (EPSG:4326). If False, return in the input CRS.
+    max_retries : int, default 5
+        Maximum number of retries for the STAC search in case of failure.
     **query_kwargs : dict, optional
-        Additional query parameters to pass to the STAC search (e.g., 'query' for
-        property filtering, 'limit' for result count limits).
-
+        Additional query parameters to pass to the STAC search (e.g., 'query' for property filtering, 'limit' for result count limits).
+    
     Returns
     -------
     geopandas.GeoDataFrame
-        GeoDataFrame containing the query results with flattened STAC item properties.
-        Contains a 'geometry' column with item footprints and additional columns for
-        item metadata. The 'properties.datetime' column is converted to pandas datetime
-        if present.
-
+        GeoDataFrame containing the query results with flattened STAC item properties. Contains a 'geometry' column with item footprints and additional columns for item metadata. The 'properties.datetime' column is converted to pandas datetime if present.
+    
     Warns
     -----
     UserWarning
         If no items are found for the given query criteria.
-
+    
     Notes
     -----
     - The function automatically handles CRS transformation between the input CRS and WGS84

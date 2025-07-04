@@ -21,13 +21,14 @@ from .query import pc_query
 from .io import read_single_item
 
 
-def lazy_merge_array(
+def lazy_merge_arrays(
     arrays: List[xr.DataArray], 
     method: str = 'first',
     geom: Optional[BaseGeometry] = None,
     crs: Optional[Union[CRS, str]] = None,
     resolution: Optional[Union[float, int]] = None,
-    resampling_method: Union[Resampling, str] = 'nearest'
+    resampling_method: Union[Resampling, str] = 'nearest',
+    nodata: Optional[float] = None
 ) -> xr.DataArray:
     """
     Merge multiple xarray DataArrays lazily
@@ -64,7 +65,10 @@ def lazy_merge_array(
         Resampling method for reprojection. Can be Resampling enum or string name
         (e.g., 'nearest', 'bilinear', 'cubic', etc.) See https://odc-geo.readthedocs.io/en/latest/_api/odc.geo.xr.ODCExtensionDa.reproject.html
         for all available options.
-        
+    nodata : float, optional
+        NoData value to use for masking. If None, uses the NoData value from the 
+        first input array.
+    
     Returns
     -------
     xarray.DataArray
@@ -109,10 +113,26 @@ def lazy_merge_array(
     if isinstance(resampling_method, Resampling):
         resampling_method = resampling_method.name.lower()
     
-    # reproject all arrays to the common geobox
-    arrays = [da.odc.reproject(how=geobox, resampling=resampling_method) for da in arrays]
-    arrays = xr.align(*arrays, join='exact')
+    # reproject all arrays to the rekli=ommon geobox
+    nodata = nodata if nodata is not None else arrays[0].rio.nodata
+    if nodata is not None and not np.isnan(nodata):
+        arrays = [da.where(da != nodata) for da in arrays]  # mask nodata values
+    
+    reprojected_arrays = []
+    for da in arrays:
+        try:
+            reprojected_arrays.append(da.odc.reproject(
+                how=geobox,
+                resampling=resampling_method,
+            ))
+        except Exception as e:
+            warn(f"Reprojection failed for {da.name} with error: {e}. Skipping this array.")
+            continue
+        
+    arrays = xr.align(*reprojected_arrays, join='exact')
     stacked = xr.concat(arrays, dim='merge_dim')
+    # if nodata is not None and not np.isnan(nodata):
+    #     stacked = stacked.where(stacked != nodata)
     
     if method == 'first':
         filled = stacked.bfill(dim='merge_dim')
@@ -133,6 +153,7 @@ def lazy_merge_array(
     else:
         raise ValueError(f"Unknown merge method: {method}")
     
+    result = result.rio.write_nodata(nodata)
     return result
 
 
@@ -152,72 +173,56 @@ def prepare_data(
     time_format_str: Optional[str] = None,
     enable_progress_bar: bool = False,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
-):
+) -> xr.DataArray:
     """
     Prepare and merge raster data from Planetary Computer query results.
-
+    
     This function selects the minimum set of STAC items needed to cover a given geometry,
     reads and mosaics raster tiles, and handles reprojection, resampling, and merging.
     Items are selected using a greedy algorithm to minimize the number of tiles while
     ensuring complete coverage. When a single item fully covers the geometry, no merging
     is performed for efficiency.
-
+    
     Parameters
     ----------
     items_gdf : geopandas.GeoDataFrame
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : Union[CRS, str], optional
-        Coordinate reference system for the output (default is 4326).
+    crs : pyproj.CRS or str, default 4326
+        Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
-    target_resolution : float, optional
-        Target pixel size for the output raster in units of the CRS. If None, uses 
-        the native resolution of the first item (default is None).
-    all_touched : bool, optional
-        Whether to include all pixels touched by the geometry during final clipping 
-        (default is False).
-    merge_method : str, optional
-        Method to use when merging overlapping arrays. Options include 'first', 'last', 
-        'min', 'max', 'mean', 'sum' (default is 'first').
-    resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use for reprojection (default is Resampling.bilinear).
-    reproject_first : bool, optional
-        If True, reproject and/or resample tiles to the desired resolution/crs 
-        prior to merging tiles when multiple items require merging. This can be 
-        useful for reducing memory footprint when merging large rasters where
-        the target pixel size is much larger (coarser) than the native resolution, 
-        but it may result in a loss of spatial accuracy (default is False).
-    reproject_num_threads: int, optional
-        Number of threads to use for reprojection operations (default is 1, -1 uses
-        all available CPUs).
-    reproject_mem_limit: int, optional
-        Memory limit in MB for reprojection operations. Larger values allow for
-        larger chunks to be processed in parallel, but may increase memory usage
-        (default is 64).
-    enable_time_dim : bool, optional
-        If True, add a time dimension to the output. All selected items must have 
-        the same datetime value (default is False).
-    time_col : str, optional
-        Column name for datetime in items_gdf (default is 'properties.datetime').
+    target_resolution : float or int, optional
+        Target pixel size for the output raster in units of the CRS. If None, uses the native resolution of the first item.
+    all_touched : bool, default False
+        Whether to include all pixels touched by the geometry during final clipping.
+    merge_method : str, default 'first'
+        Method to use when merging overlapping arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+        Resampling method to use for reprojection.
+    chunks : str or dict, optional
+        Chunking options for dask/xarray.
+    enable_time_dim : bool, default False
+        If True, add a time dimension to the output. All selected items must have the same datetime value.
+    time_col : str, default 'properties.datetime'
+        Column name for datetime in items_gdf.
     time_format_str : str, optional
-        Format string for parsing datetime values (default is None, uses pandas default).
-    enable_progress_bar : bool, optional
-        Whether to display a progress bar during tile merging (default is False).
+        Format string for parsing datetime values.
+    enable_progress_bar : bool, default False
+        Whether to display a progress bar during tile merging.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-
+    
     Returns
     -------
     xarray.DataArray
         The prepared raster data as an xarray DataArray, optionally with a time dimension.
-
+    
     Raises
     ------
     ValueError
-        If enable_time_dim is True but time_col is not found in items_gdf, or if
-        selected items have different datetime values when enable_time_dim is True.
+        If enable_time_dim is True but time_col is not found in items_gdf, or if selected items have different datetime values when enable_time_dim is True.
     """
     
     if isinstance(resampling_method, Resampling):
@@ -238,15 +243,25 @@ def prepare_data(
 
     selected_items = []
     if len(items_full_overlap) >= 1: # single item, no need to merge
+        da = None
+        for item in items_full_overlap:
+            try:
+                da = read_single_item(
+                    item_gs=items_full_overlap.iloc[0],
+                    geometry=geometry,
+                    bands=bands,
+                    chunks=chunks,
+                    all_touched=True,
+                    clip_to_geometry=False, # Wait to clip until after merging
+                    crs=crs,
+                    **rioxarray_kwargs,
+                )
+            except Exception as e:
+                warn(f"Failed to read item {item['id']} with error: {e}. Skipping this item.")
+                continue
         
-        image = read_single_item(
-            item_gs=items_full_overlap.iloc[0],
-            geometry=geometry,
-            bands=bands,
-            crs=crs,
-            chunks=chunks,
-            **rioxarray_kwargs,
-        )
+        if da is None:
+            raise ValueError("Could not read any items that supposedly had full overlap with the geometry. Try checking the geometry and its CRS.")
         
     else: # multiple items, need to merge and reproject. 
         items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
@@ -274,27 +289,41 @@ def prepare_data(
             items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
         
         das = []
-        for item_series in tqdm(selected_items, desc='Merging tiles', unit='tiles', disable=not enable_progress_bar):
-            xa = read_single_item(
-                item_gs=item_series,
-                geometry=geometry,
-                bands=bands,
-                chunks=chunks,
-                all_touched=True,
-                clip_to_geometry=False, # Wait to clip until after merging
-                crs=crs,
-                **rioxarray_kwargs,
-            )
-            das.append(xa)
+        for item_series in tqdm(
+            selected_items, 
+            desc='Merging tiles' if chunks is None else 'Constructing dask computation graph',
+            unit='tiles', 
+            disable=not enable_progress_bar
+        ):
+            
+            try:
+                da = read_single_item(
+                    item_gs=item_series,
+                    geometry=geometry,
+                    bands=bands,
+                    chunks=chunks,
+                    all_touched=True,
+                    clip_to_geometry=False, # Wait to clip until after merging
+                    crs=crs,
+                    **rioxarray_kwargs,
+                )
+                das.append(da)
+            except Exception as e:
+                warn(f"Failed to read item {item_series['id']} with error: {e}. Skipping this item.")
+                continue
+            
+            if len(das) == 0:
+                raise ValueError("Could not read any items that supposedly had partial overlap with the geometry. Try checking the geometry and its CRS.")
+
+        da = lazy_merge_arrays(
+            das,
+            method=merge_method,
+            geom=geometry,
+            crs=crs if crs is not None else das[0].rio.crs,
+            resolution=target_resolution if target_resolution is not None else das[0].rio.resolution()[0],  # assuming square pixels
+            resampling_method=resampling_method,
+        )
     
-    da = lazy_merge_array(
-        das,
-        method=merge_method,
-        geom=geometry,
-        crs=crs if crs is not None else das[0].rio.crs,
-        resolution=target_resolution if target_resolution is not None else das[0].rio.resolution()[0],  # assuming square pixels
-        resampling_method=resampling_method,
-    )
     da = da.odc.crop(Geometry(geometry, crs=crs), apply_mask=True, all_touched=all_touched)
     # return da
     if chunks is not None and da.chunks != chunks:
@@ -339,89 +368,72 @@ def query_and_prepare(
     geometry: BaseGeometry,
     crs: Union[CRS, str] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
-    return_in_wgs84: bool = False,
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
     merge_method: str = 'first',
-    resampling_method: Resampling = Resampling.bilinear,
+    resampling_method: Union[Resampling, str] = 'bilinear',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
     enable_progress_bar: bool = False,
+    return_in_wgs84: bool = False,
     return_items: bool = False,
     query_kwargs: Optional[Dict[str, Any]] = None,
-    rioxarray_kwargs: Optional[Dict[str, Any]] = None
+    rioxarray_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[xr.DataArray, tuple]:
     """
     Query the Planetary Computer and prepare raster data in a single step.
-
+    
     This function combines a STAC API query and raster preparation pipeline. It queries
     the Planetary Computer for items matching the given geometry, date range, and collections,
     then reads, merges, and processes the raster data. Optionally returns the items GeoDataFrame.
-
+    
     Parameters
     ----------
     collections : str or list of str
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry.
-    crs : Union[CRS, str], optional
-        Coordinate reference system for the input/output (default is 4326).
-    datetime : str, optional
-        Date/time range for the query in ISO 8601 format or interval
-        (default is '2000-01-01/2025-01-01').
-    return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS
-        (default is False).
+    crs : pyproj.CRS or str, default 4326
+        Coordinate reference system for the input/output.
+    datetime : str, default '2000-01-01/2025-01-01'
+        Date/time range for the query in ISO 8601 format or interval.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
-    target_resolution : float, optional
-        Target pixel size for the output raster in units of the CRS
-        (default is None, uses native resolution).
-    all_touched : bool, optional
-        Whether to include all pixels touched by the geometry during clipping
-        (default is False).
-    merge_method : str, optional
-        Method to use when merging overlapping arrays. Options include 'first', 'last',
-        'min', 'max', 'mean', 'sum' (default is 'first').
-    resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use for reprojection (default is Resampling.bilinear).
-    reproject_first : bool, optional
-        If True, reproject and/or resample tiles to the desired resolution/crs prior 
-        to merging tiles when multiple items require merging. This can be useful 
-        for reducing memory footprint when merging large rasters where the target
-        pixel size is much larger (coarser) than the native resolution, but it may
-        result in a loss of spatial accuracy (default is False).
-    reproject_num_threads: int, optional
-        Number of threads to use for reprojection operations (default is 1, -1 uses 
-        all available CPUs).
-    reproject_mem_limit: int, optional
-        Memory limit in MB for reprojection operations. Larger values allow for 
-        larger chunks to be processed in parallel, but may increase memory usage
-        (default is 64).
-    enable_time_dim : bool, optional
-        If True, add a time dimension to the output (default is False).
-    time_col : str, optional
-        Column name for datetime in items_gdf (default is 'properties.datetime').
+    target_resolution : float or int, optional
+        Target pixel size for the output raster in units of the CRS.
+    all_touched : bool, default False
+        Whether to include all pixels touched by the geometry during clipping.
+    merge_method : str, default 'first'
+        Method to use when merging overlapping arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+        Resampling method to use for reprojection.
+    chunks : str or dict, optional
+        Chunking options for dask/xarray.
+    enable_time_dim : bool, default False
+        If True, add a time dimension to the output.
+    time_col : str, default 'properties.datetime'
+        Column name for datetime in items_gdf.
     time_format_str : str, optional
-        Format string for parsing datetime values (default is None, uses pandas default).
-    enable_progress_bar : bool, optional
-        Whether to display a progress bar during merging (default is False).
-    return_items : bool, optional
-        If True, also return the items GeoDataFrame (default is False).
+        Format string for parsing datetime values.
+    enable_progress_bar : bool, default False
+        Whether to display a progress bar during merging.
+    return_in_wgs84 : bool, default False
+        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
+    return_items : bool, default False
+        If True, also return the items GeoDataFrame.
     query_kwargs : dict, optional
         Additional query parameters to pass to the STAC search.
     rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-
+    
     Returns
     -------
     xarray.DataArray or tuple
-        The prepared raster data. If return_items is True, returns a tuple of
-        (DataArray, GeoDataFrame).
-
+        The prepared raster data. If return_items is True, returns a tuple of (DataArray, GeoDataFrame).
+    
     Notes
     -----
     This is a convenience function that combines pc_query() and prepare_data().
@@ -442,13 +454,14 @@ def query_and_prepare(
         crs=crs,
         bands=bands,
         target_resolution=target_resolution,
+        all_touched=all_touched,
         merge_method=merge_method,
         resampling_method=resampling_method,
+        chunks=chunks,
         enable_time_dim=enable_time_dim,
         time_col=time_col,
         time_format_str=time_format_str,
         enable_progress_bar=enable_progress_bar,
-        all_touched=all_touched,
         **rioxarray_kwargs if rioxarray_kwargs is not None else {}
     )
     
@@ -467,7 +480,7 @@ def prepare_timeseries(
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
     merge_method: str = 'first',
-    resampling_method: Resampling = Resampling.bilinear,
+    resampling_method: Union[Resampling, str] = 'bilinear',
     chunks: Optional[Dict[str, int]] = None,
     time_col: str = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -478,71 +491,61 @@ def prepare_timeseries(
 ) -> xr.DataArray:
     """
     Prepare a time series of raster data from a GeoDataFrame of STAC items.
-
+    
     This function groups items by time, reads and merges rasters for each timestep,
     and concatenates them into a single DataArray along the time dimension. Supports
     parallel processing and chunking for large datasets.
-
+    
     Parameters
     ----------
     items_gdf : geopandas.GeoDataFrame
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : Union[CRS, str], optional
-        Coordinate reference system for the output (default is 4326).
+    crs : pyproj.CRS or str, default 4326
+        Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
-    target_resolution : float, optional
-        Target pixel size for the output raster (default is None, uses native resolution).
-    all_touched : bool, optional
-        Whether to include all pixels touched by the geometry (default is False).
-    merge_method : str, optional
-        Method to use when merging arrays (e.g., 'first', 'last', 'min', 'max', 'mean', 'sum')
-        (default is 'first').
-    resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use for reprojection (default is Resampling.bilinear).
-    reproject_first : bool, optional
-        If True, reproject and/or resample tiles to the desired resolution/crs prior 
-        to merging tiles when multiple items require merging. This can be useful for 
-        reducing memory footprint when merging large rasters where the target pixel 
-        size is much larger (coarser) than the native resolution, but it may result 
-        in a loss of spatial accuracy (default is False).
-    reproject_num_threads: int, optional
-        Number of threads to use for reprojection operations (default is 1, -1 uses
-        all available CPUs).
-    reproject_mem_limit: int, optional
-        Memory limit in MB for reprojection operations. Larger values allow for
-        larger chunks to be processed in parallel, but may increase memory usage
-        (default is 64).
-    time_col : str, optional
-        Column name for datetime in items_gdf (default is 'properties.datetime').
-    ignore_time_component : bool, optional
-        If True, ignore the time component and only use the date (default is True).
-    time_format_str : str, optional
-        Format string for parsing datetime values (default is None, uses pandas default).
+    target_resolution : float or int, optional
+        Target pixel size for the output raster.
+    all_touched : bool, default False
+        Whether to include all pixels touched by the geometry.
+    merge_method : str, default 'first'
+        Method to use when merging arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+        Resampling method to use for reprojection.
     chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
-    max_workers : int, optional
-        Number of parallel workers to use (default is 1; -1 uses all available CPUs).
-    enable_progress_bar : bool, optional
-        Whether to display a progress bar during processing (default is True).
+        Chunking options for dask/xarray.
+    time_col : str, default 'properties.datetime'
+        Column name for datetime in items_gdf.
+    time_format_str : str, optional
+        Format string for parsing datetime values.
+    ignore_time_component : bool, default True
+        If True, ignore the time component and only use the date.
+    max_workers : int, default 1
+        Number of parallel workers to use (-1 uses all available CPUs).
+    enable_progress_bar : bool, default True
+        Whether to display a progress bar during processing.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-
+    
     Returns
     -------
     xarray.DataArray
         The prepared time series raster data as an xarray DataArray with a time dimension.
     """
     
-    # chunk handling
+    # need to handle case where chunks is passed, may not contain all dimensions
+    # this is not strictly necessary, but it helps ensure that results are consistent
+    # and expected as several functions will not assume dimensions like 'x', 'y', or 'time' are present
     chunks_no_time = None
-    chunks_no_band_time = None
     if chunks is not None and isinstance(chunks, Dict):
-        # need to ensure we don't chunk by band or time dimensions when they don't exist yet
+        if 'x' not in chunks:
+            chunks['x'] = -1
+        if 'y' not in chunks:
+            chunks['y'] = -1
+            
         chunks_no_time = {k: v for k, v in chunks.items() if k != 'time'}
-        chunks_no_band_time = {k: v for k, v in chunks_no_time.items() if k != 'band'}
     
     if time_col not in items_gdf.columns:
         raise ValueError(f"Column '{time_col}' not found in items_gdf. Please provide a valid time column.")
@@ -551,35 +554,16 @@ def prepare_timeseries(
     if ignore_time_component:
         items_gdf[time_col] = items_gdf[time_col].dt.normalize()
     
-    # das = []
-    # for _, group in items_gdf.groupby(time_col):
-    #     da = prepare_data(
-    #         items_gdf=gpd.GeoDataFrame(group),
-    #         geometry=geometry,
-    #         crs=crs,
-    #         bands=bands,
-    #         target_resolution=target_resolution,
-    #         all_touched=all_touched,
-    #         merge_method=merge_method,
-    #         resampling_method=resampling_method,
-    #         enable_time_dim=True,
-    #         time_col=time_col,
-    #         time_format_str=time_format_str,
-    #         enable_progress_bar=False,
-    #         chunks=chunks_no_band_time,
-    #         **rioxarray_kwargs,
-    #     )
-    
     if max_workers == 1:
         das = []
-        for _, group in tqdm(
+        for _, group_gdf in tqdm(
             items_gdf.groupby(time_col),
-            desc="Processing items" if chunks_no_band_time is None else "Constructing dask computation graph",
+            desc="Processing items" if chunks_no_time is None else "Constructing dask computation graph",
             unit="timestep",
             disable=not enable_progress_bar,
         ):
             da = prepare_data(
-                items_gdf=gpd.GeoDataFrame(group),
+                items_gdf=group_gdf,
                 geometry=geometry,
                 crs=crs,
                 bands=bands,
@@ -591,12 +575,9 @@ def prepare_timeseries(
                 time_col= time_col,
                 time_format_str=time_format_str,
                 enable_progress_bar=False,
-                chunks=chunks_no_band_time,
+                chunks=chunks_no_time,
                 **rioxarray_kwargs,
             )
-            if chunks is not None:
-                da = da.chunk(chunks_no_time)
-
             das.append(da)
     
     else:
@@ -615,19 +596,19 @@ def prepare_timeseries(
             time_col=time_col,
             time_format_str=time_format_str,
             enable_progress_bar=False,
-            chunks=chunks_no_band_time,
+            chunks=chunks_no_time,
             **rioxarray_kwargs,           
         )
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             groups = list(items_gdf.groupby(time_col))
             
-            futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group)) for _, group in groups]
+            futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group_gdf)) for _, group_gdf in groups]
             
             das = []
             with tqdm(
                 as_completed(futures),
-                desc="Processing items" if chunks_no_band_time is None else "Constructing dask computation graph",
+                desc="Processing items" if chunks_no_time is None else "Constructing dask computation graph",
                 unit="timestep",
                 total=len(groups),
                 disable=not enable_progress_bar,
@@ -635,15 +616,12 @@ def prepare_timeseries(
                 for future in progress:
                     try:
                         da = future.result()
-                        if chunks is not None:
-                            da = da.chunk(chunks_no_time)
                         das.append(da)
                     except Exception as e:
-                        print(f"Error processing group: {e}")
-                        continue
+                        warn(f"Failed to process a group with error: {e}. Skipping this group.")
     
     da = xr.concat(das, dim='time').sortby('time')
-    if chunks is not None:
+    if chunks is not None and da.chunks != chunks:
         return da.chunk(chunks)
     
     return da
