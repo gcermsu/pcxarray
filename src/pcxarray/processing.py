@@ -16,6 +16,7 @@ from odc.geo.geobox import GeoBox
 from odc.geo.geom import Geometry
 import odc.geo.xr
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from joblib import Parallel, delayed
 
 from .query import pc_query
 from .io import read_single_item
@@ -23,7 +24,7 @@ from .io import read_single_item
 
 def lazy_merge_arrays(
     arrays: List[xr.DataArray], 
-    method: str = 'first',
+    method: str = 'last',
     geom: Optional[BaseGeometry] = None,
     crs: Optional[Union[CRS, str]] = None,
     resolution: Optional[Union[float, int]] = None,
@@ -43,10 +44,10 @@ def lazy_merge_arrays(
     ----------
     arrays : List[xarray.DataArray]
         List of georeferenced DataArrays to merge from rioxarray
-    method : str, default 'first'
+    method : str, default 'last'
         Method for merging overlapping pixels. Options are:
-        - 'first': Use first non-NaN value (backward fill)
         - 'last': Use last non-NaN value (forward fill)  
+        - 'first': Use first non-NaN value (backward fill)
         - 'min': Minimum value across arrays
         - 'max': Maximum value across arrays
         - 'mean': Mean value across arrays
@@ -134,12 +135,12 @@ def lazy_merge_arrays(
     # if nodata is not None and not np.isnan(nodata):
     #     stacked = stacked.where(stacked != nodata)
     
-    if method == 'first':
-        filled = stacked.bfill(dim='merge_dim')
-        result = filled.isel(merge_dim=0)
-    elif method == 'last':
+    if method == 'last':
         filled = stacked.ffill(dim='merge_dim')
         result = filled.isel(merge_dim=-1)
+    elif method == 'first':
+        filled = stacked.bfill(dim='merge_dim')
+        result = filled.isel(merge_dim=0)
     elif method == 'min':
         result = stacked.min(dim='merge_dim', skipna=True)
     elif method == 'max':
@@ -165,7 +166,7 @@ def prepare_data(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
-    merge_method: str = 'first',
+    merge_method: str = 'last',
     resampling_method: Union[Resampling, str] = 'bilinear',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
@@ -197,8 +198,8 @@ def prepare_data(
         Target pixel size for the output raster in units of the CRS. If None, uses the native resolution of the first item.
     all_touched : bool, default False
         Whether to include all pixels touched by the geometry during final clipping.
-    merge_method : str, default 'first'
-        Method to use when merging overlapping arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    merge_method : str, default 'last'
+        Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
     resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
@@ -371,7 +372,7 @@ def query_and_prepare(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'first',
+    merge_method: str = 'last',
     resampling_method: Union[Resampling, str] = 'bilinear',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
@@ -406,8 +407,8 @@ def query_and_prepare(
         Target pixel size for the output raster in units of the CRS.
     all_touched : bool, default False
         Whether to include all pixels touched by the geometry during clipping.
-    merge_method : str, default 'first'
-        Method to use when merging overlapping arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    merge_method : str, default 'last'
+        Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
     resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
@@ -479,7 +480,7 @@ def prepare_timeseries(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'first',
+    merge_method: str = 'last',
     resampling_method: Union[Resampling, str] = 'bilinear',
     chunks: Optional[Dict[str, int]] = None,
     time_col: str = 'properties.datetime',
@@ -510,8 +511,8 @@ def prepare_timeseries(
         Target pixel size for the output raster.
     all_touched : bool, default False
         Whether to include all pixels touched by the geometry.
-    merge_method : str, default 'first'
-        Method to use when merging arrays. Options: 'first', 'last', 'min', 'max', 'mean', 'sum', 'median'.
+    merge_method : str, default 'last'
+        Method to use when merging arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
     resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
         Resampling method to use for reprojection.
     chunks : dict, optional
@@ -600,25 +601,46 @@ def prepare_timeseries(
             **rioxarray_kwargs,           
         )
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            groups = list(items_gdf.groupby(time_col))
+        # with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        #     groups = list(items_gdf.groupby(time_col))
             
-            futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group_gdf)) for _, group_gdf in groups]
+        #     futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group_gdf)) for _, group_gdf in groups]
             
-            das = []
-            with tqdm(
-                as_completed(futures),
+        #     das = []
+        #     with tqdm(
+        #         as_completed(futures),
+        #         desc="Processing items" if chunks_no_time is None else "Constructing dask computation graph",
+        #         unit="timestep",
+        #         total=len(groups),
+        #         disable=not enable_progress_bar,
+        #     ) as progress:
+        #         for future in progress:
+        #             try:
+        #                 da = future.result()
+        #                 das.append(da)
+        #             except Exception as e:
+        #                 warn(f"Failed to process a group with error: {e}. Skipping this group.")
+        groups = list(items_gdf.groupby(time_col))
+        
+        # Handle exceptions by wrapping the worker function
+        def safe_worker(items_gdf):
+            try:
+                return worker(items_gdf=items_gdf)
+            except Exception as e:
+                warn(f"Failed to process a group with error: {e}. Skipping this group.")
+                return None
+        
+        # Alternative approach with better error handling
+        das = Parallel(n_jobs=max_workers)(
+            delayed(safe_worker)(gpd.GeoDataFrame(group_gdf))
+            for _, group_gdf in tqdm(
+                groups,
                 desc="Processing items" if chunks_no_time is None else "Constructing dask computation graph",
                 unit="timestep",
-                total=len(groups),
                 disable=not enable_progress_bar,
-            ) as progress:
-                for future in progress:
-                    try:
-                        da = future.result()
-                        das.append(da)
-                    except Exception as e:
-                        warn(f"Failed to process a group with error: {e}. Skipping this group.")
+            )
+        )
+        das = [da for da in das if da is not None]
     
     da = xr.concat(das, dim='time').sortby('time')
     if chunks is not None and da.chunks != chunks:

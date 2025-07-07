@@ -88,9 +88,9 @@ def load_from_url(
         If the raster cannot be loaded after the specified number of retries.
     """
     
-    os.environ.setdefault("CPL_VSIL_CURL_TIMEOUT", "10")          # request-level timeout
-    os.environ.setdefault("CPL_VSIL_CURL_MAX_RETRY", "3")         # number of retry attempts
-    os.environ.setdefault("CPL_VSIL_CURL_RETRY_DELAY", "2")       # seconds between retries
+    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")           # request-level timeout
+    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")         # number of retry attempts
+    os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "5")       # seconds between retries
     
     for _retries in range(max_retries):
         try:
