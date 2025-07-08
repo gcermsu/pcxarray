@@ -42,7 +42,7 @@ def load_from_url(
     url: str,
     bands: Optional[List[int]] = None,
     geometry: Optional[BaseGeometry] = None,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str] = '4326',
     chunks: Optional[Dict[str, int]] = None,
     clip_to_geometry: bool = False,
     all_touched: bool = False,
@@ -183,12 +183,11 @@ def read_single_item(
             and col not in ignored_assets
         ]
     
-    
     if len(selected_columns) == 1:
         # if only one column is selected, we can read it directly
         return load_from_url(
             url=item_gs[selected_columns[0]],
-            bands=bands if bands is not None and all(isinstance(band, int) for band in bands) else None,
+            bands=bands if bands is not None and all([isinstance(band, int) for band in bands]) else None,
             geometry=geometry,
             crs=crs,
             chunks=chunks,

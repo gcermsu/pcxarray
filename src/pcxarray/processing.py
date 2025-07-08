@@ -167,13 +167,14 @@ def prepare_data(
     target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
     merge_method: str = 'last',
-    resampling_method: Union[Resampling, str] = 'bilinear',
+    resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
+    max_workers: int = 1,
     enable_progress_bar: bool = False,
-    **rioxarray_kwargs: Optional[Dict[str, Any]]
+    **rioxarray_kwargs: Optional[Dict[str, Any]],
 ) -> xr.DataArray:
     """
     Prepare and merge raster data from Planetary Computer query results.
@@ -200,7 +201,7 @@ def prepare_data(
         Whether to include all pixels touched by the geometry during final clipping.
     merge_method : str, default 'last'
         Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
         Chunking options for dask/xarray.
@@ -210,6 +211,8 @@ def prepare_data(
         Column name for datetime in items_gdf.
     time_format_str : str, optional
         Format string for parsing datetime values.
+    max_workers : int, default 1
+        Number of parallel workers to use (-1 uses all available CPUs).
     enable_progress_bar : bool, default False
         Whether to display a progress bar during tile merging.
     **rioxarray_kwargs : dict, optional
@@ -257,12 +260,21 @@ def prepare_data(
                     crs=crs,
                     **rioxarray_kwargs,
                 )
+                break # Exit loop if successful
             except Exception as e:
                 warn(f"Failed to read item {item['id']} with error: {e}. Skipping this item.")
                 continue
         
         if da is None:
             raise ValueError("Could not read any items that supposedly had full overlap with the geometry. Try checking the geometry and its CRS.")
+        
+        da = da.odc.reproject(
+            how=GeoBox.from_geopolygon(
+                Geometry(geometry, crs=crs),
+                resolution=target_resolution
+            ),
+            resampling=resampling_method,
+        )
         
     else: # multiple items, need to merge and reproject. 
         items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
@@ -290,15 +302,10 @@ def prepare_data(
             items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
         
         das = []
-        for item_series in tqdm(
-            selected_items, 
-            desc='Merging tiles' if chunks is None else 'Constructing dask computation graph',
-            unit='tiles', 
-            disable=not enable_progress_bar
-        ):
-            
+        
+        def safe_read_item(item_series):
             try:
-                da = read_single_item(
+                return read_single_item(
                     item_gs=item_series,
                     geometry=geometry,
                     bands=bands,
@@ -308,13 +315,27 @@ def prepare_data(
                     crs=crs,
                     **rioxarray_kwargs,
                 )
-                das.append(da)
             except Exception as e:
                 warn(f"Failed to read item {item_series['id']} with error: {e}. Skipping this item.")
-                continue
-            
-            if len(das) == 0:
-                raise ValueError("Could not read any items that supposedly had partial overlap with the geometry. Try checking the geometry and its CRS.")
+                return None
+        
+        if max_workers == -1:
+            max_workers = os.cpu_count() or 1
+        max_workers = min(max_workers, len(selected_items))  # limit to number of items
+        
+        das = Parallel(n_jobs=max_workers)(
+            delayed(safe_read_item)(item_series)
+            for item_series in tqdm(
+                selected_items, 
+                desc='Merging tiles' if chunks is None else 'Constructing dask computation graph',
+                unit='tiles', 
+                disable=not enable_progress_bar
+            )
+        )
+        
+        das = [da for da in das if da is not None]
+        if len(das) == 0:
+            raise ValueError("Could not read any items that supposedly had partial overlap with the geometry. Try checking the geometry and its CRS.")
 
         da = lazy_merge_arrays(
             das,
@@ -373,7 +394,7 @@ def query_and_prepare(
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
     merge_method: str = 'last',
-    resampling_method: Union[Resampling, str] = 'bilinear',
+    resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
@@ -409,7 +430,7 @@ def query_and_prepare(
         Whether to include all pixels touched by the geometry during clipping.
     merge_method : str, default 'last'
         Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
         Chunking options for dask/xarray.
@@ -481,7 +502,7 @@ def prepare_timeseries(
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
     merge_method: str = 'last',
-    resampling_method: Union[Resampling, str] = 'bilinear',
+    resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Optional[Dict[str, int]] = None,
     time_col: str = 'properties.datetime',
     time_format_str: Optional[str] = None,
@@ -513,7 +534,7 @@ def prepare_timeseries(
         Whether to include all pixels touched by the geometry.
     merge_method : str, default 'last'
         Method to use when merging arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'bilinear'
+    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
         Resampling method to use for reprojection.
     chunks : dict, optional
         Chunking options for dask/xarray.
