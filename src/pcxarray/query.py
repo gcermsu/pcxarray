@@ -1,14 +1,15 @@
 from time import sleep
 import shapely
 from pystac import Item
-import pystac_client
+from pystac_client import Client
+import pandas as pd
 import geopandas as gpd
 from pyproj import Transformer, CRS, transform
 from shapely.ops import transform
 from shapely import from_geojson
+from shapely.geometry import box
 from warnings import warn
 from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
 from .utils import _flatten_dict
 from .cache import cache
 from joblib import expires_after
@@ -49,7 +50,7 @@ def safe_pc_search(
     """
     
     def worker():
-        catalog = pystac_client.Client.open(
+        catalog = Client.open(
             "https://planetarycomputer.microsoft.com/api/stac/v1",
         )
         search = catalog.search(**search_kwargs)
@@ -65,7 +66,7 @@ def safe_pc_search(
 def pc_query(
     collections: Union[str, List[str]],
     geometry: shapely.geometry.base.BaseGeometry,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
     return_in_wgs84: bool = False,
     max_retries: int = 5,
@@ -84,7 +85,7 @@ def pc_query(
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry for spatial filtering.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Coordinate reference system of the input geometry.
     datetime : str, default '2000-01-01/2025-01-01'
         Date/time range for temporal filtering in ISO 8601 format or interval.
@@ -169,3 +170,41 @@ def pc_query(
     return items_gdf
 
 
+def get_pc_collections(reduced: bool = True, crs: Union[CRS, str, int] = 4326) -> gpd.GeoDataFrame:
+    
+    client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
+    collections = list(client.get_collections())
+    
+    collections_data = []
+    for collection in collections:
+        collection_dict = _flatten_dict(collection.to_dict())
+        geom = collection_dict.pop('extent.spatial.bbox', None)
+        if geom is not None:
+            if len(geom) == 1:
+                collection_dict['geometry'] = box(*geom[0])
+            else:
+                geoms = []
+                for g in geom:
+                    geoms.append(box(*g))
+                collection_dict['geometry'] = shapely.geometry.MultiPolygon(geoms)
+
+        else:
+            collection_dict['geometry'] = None
+            
+        if reduced:
+            # Keep only essential fields
+            collection_dict = {
+                'id': collection_dict.get('id', ''),
+                'title': collection_dict.get('title', ''),
+                'description': collection_dict.get('description', ''),
+                'license': collection_dict.get('license', ''),
+                'geometry': collection_dict.get('geometry', None),
+            }
+        
+        collections_data.append(collection_dict)
+    
+    gdf = gpd.GeoDataFrame(collections_data, crs=4326)
+    if crs is not None:
+        gdf = gdf.to_crs(crs)
+    return gdf
+    
