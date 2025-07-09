@@ -12,12 +12,29 @@ from typing import List, Dict, Any, Union
 import odc.geo.xr
 from odc.geo.geom import Geometry
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
 import rioxarray
 import os
 from typing import Union
 import xarray as xr
 
+
+def _load_raster_subprocess(signed_url, chunks, rioxarray_kwargs):
+    """Load raster in subprocess - must be at module level for pickling"""
+    # Set GDAL environment variables in subprocess
+    os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
+    os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = '10'
+    os.environ["GDAL_HTTP_TIMEOUT"] = "10"
+    os.environ["GDAL_HTTP_MAX_RETRY"] = "0"
+    os.environ["GDAL_HTTP_RETRY_DELAY"] = "0"
+    
+    return rioxarray.open_rasterio(
+        signed_url,
+        masked=True,
+        chunks=chunks,
+        lock=False,
+        **rioxarray_kwargs
+    )
 
 
 
@@ -30,6 +47,7 @@ def load_from_url(
     clip_to_geometry: bool = False,
     all_touched: bool = False,
     max_retries: int = 5,
+    timeout: float = 60.0,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
     """
@@ -57,6 +75,8 @@ def load_from_url(
         Whether to include all pixels touched by the geometry during clipping.
     max_retries : int, default 5
         Maximum number of attempts to load the raster in case of failure.
+    timeout : float, default 60.0
+        Maximum time in seconds to wait for the raster to load. Set to -1 to disable timeout.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to rioxarray.open_rasterio.
     
@@ -71,21 +91,31 @@ def load_from_url(
         If the raster cannot be loaded after the specified number of retries.
     """
     
-    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")           # request-level timeout
-    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")         # number of retry attempts
-    os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "5")       # seconds between retries
+    if timeout < 1 and timeout != -1:
+        raise ValueError("Timeout must be a positive number or -1 to disable timeout.")
+    
+    os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"  # Disable directory reading for performance
+    os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = '10'   # connection-level timeout
+    os.environ["GDAL_HTTP_TIMEOUT"] = "10"          # request-level timeout
+    os.environ["GDAL_HTTP_MAX_RETRY"] = "0"         # number of retry attempts
+    os.environ["GDAL_HTTP_RETRY_DELAY"] = "0"       # seconds between retries
+
     
     for _retries in range(max_retries):
         try:
             # Sign the URL with Planetary Computer
             signed_url = planetary_computer.sign(url)
-            # da = safe_open_raster(
-            da = rioxarray.open_rasterio(
-                signed_url,
-                masked=True,
-                chunks=chunks,
-                **rioxarray_kwargs
-            )
+            if timeout == -1:
+                da = _load_raster_subprocess(signed_url, chunks, rioxarray_kwargs)
+            else:
+                with ProcessPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_load_raster_subprocess, signed_url, chunks, rioxarray_kwargs)
+                    try:
+                        da = future.result(timeout=timeout)
+                    except TimeoutError:
+                        future.cancel()
+                        raise TimeoutError(f"Loading raster from COG timed out after {timeout} seconds. If loading a large dataset, consider increasing the timeout value.")
+
             break  # Exit loop if loading is successful
         except Exception as e:
             if _retries < max_retries - 1:

@@ -144,6 +144,8 @@ def pc_query(
     for item in pystac_items:
         item_dict = item.to_dict()
         geometry = from_geojson(item_dict.pop('geometry').__str__().replace('\'', '"'))
+        if isinstance(geometry, shapely.geometry.MultiPolygon) and len(geometry.geoms) == 1:
+            geometry = geometry.geoms[0]
         item_dict['geometry'] = geometry
         items.append(_flatten_dict(item_dict))
     
@@ -162,7 +164,7 @@ def pc_query(
         # round to milliseconds for compatibility with netcdf/zarr
         items_gdf['properties.datetime'] = [t.tz_localize(None) for t in items_gdf['properties.datetime'].dt.round('ms')]
         items_gdf['properties.datetime'] = items_gdf['properties.datetime'].astype('datetime64[ms]')
-        items_gdf = items_gdf.sort_values(by='properties.datetime')
+        items_gdf = items_gdf.sort_values(by='properties.datetime').reset_index()
     
     return items_gdf
 
