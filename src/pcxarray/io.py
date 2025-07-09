@@ -19,24 +19,6 @@ from typing import Union
 import xarray as xr
 
 
-def _load_raster_subprocess(signed_url, chunks, rioxarray_kwargs):
-    """Load raster in subprocess - must be at module level for pickling"""
-    # Set GDAL environment variables in subprocess
-    os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
-    os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = '10'
-    os.environ["GDAL_HTTP_TIMEOUT"] = "10"
-    os.environ["GDAL_HTTP_MAX_RETRY"] = "0"
-    os.environ["GDAL_HTTP_RETRY_DELAY"] = "0"
-    
-    return rioxarray.open_rasterio(
-        signed_url,
-        masked=True,
-        chunks=chunks,
-        lock=False,
-        **rioxarray_kwargs
-    )
-
-
 
 def load_from_url(
     url: str,
@@ -47,7 +29,6 @@ def load_from_url(
     clip_to_geometry: bool = False,
     all_touched: bool = False,
     max_retries: int = 5,
-    timeout: float = 60.0,
     **rioxarray_kwargs: Optional[Dict[str, Any]]
 ) -> xr.DataArray:
     """
@@ -91,9 +72,6 @@ def load_from_url(
         If the raster cannot be loaded after the specified number of retries.
     """
     
-    if timeout < 1 and timeout != -1:
-        raise ValueError("Timeout must be a positive number or -1 to disable timeout.")
-    
     os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"  # Disable directory reading for performance
     os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = '10'   # connection-level timeout
     os.environ["GDAL_HTTP_TIMEOUT"] = "10"          # request-level timeout
@@ -105,16 +83,13 @@ def load_from_url(
         try:
             # Sign the URL with Planetary Computer
             signed_url = planetary_computer.sign(url)
-            if timeout == -1:
-                da = _load_raster_subprocess(signed_url, chunks, rioxarray_kwargs)
-            else:
-                with ProcessPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(_load_raster_subprocess, signed_url, chunks, rioxarray_kwargs)
-                    try:
-                        da = future.result(timeout=timeout)
-                    except TimeoutError:
-                        future.cancel()
-                        raise TimeoutError(f"Loading raster from COG timed out after {timeout} seconds. If loading a large dataset, consider increasing the timeout value.")
+            da = rxr.open_rasterio(
+                signed_url,
+                chunks=chunks,
+                masked=True,
+                lock=False,
+                **rioxarray_kwargs
+            )
 
             break  # Exit loop if loading is successful
         except Exception as e:
