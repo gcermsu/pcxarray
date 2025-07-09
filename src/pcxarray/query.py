@@ -68,7 +68,6 @@ def pc_query(
     geometry: shapely.geometry.base.BaseGeometry,
     crs: Union[CRS, str, int] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
-    return_in_wgs84: bool = False,
     max_retries: int = 5,
     **query_kwargs: Optional[Dict[str, Any]],
 ) -> gpd.GeoDataFrame:
@@ -89,8 +88,6 @@ def pc_query(
         Coordinate reference system of the input geometry.
     datetime : str, default '2000-01-01/2025-01-01'
         Date/time range for temporal filtering in ISO 8601 format or interval.
-    return_in_wgs84 : bool, default False
-        If True, return results in WGS84 (EPSG:4326). If False, return in the input CRS.
     max_retries : int, default 5
         Maximum number of retries for the STAC search in case of failure.
     **query_kwargs : dict, optional
@@ -157,8 +154,7 @@ def pc_query(
         items_gdf = gpd.GeoDataFrame(items)
     
     items_gdf = items_gdf.set_crs(4326) # by default, planetary computer returns items in WGS84
-    if not return_in_wgs84:
-        items_gdf = items_gdf.to_crs(crs)
+    items_gdf = items_gdf.to_crs(crs) 
     
     # set datetime column if it exists
     if 'properties.datetime' in items_gdf.columns:
@@ -166,6 +162,7 @@ def pc_query(
         # round to milliseconds for compatibility with netcdf/zarr
         items_gdf['properties.datetime'] = [t.tz_localize(None) for t in items_gdf['properties.datetime'].dt.round('ms')]
         items_gdf['properties.datetime'] = items_gdf['properties.datetime'].astype('datetime64[ms]')
+        items_gdf = items_gdf.sort_values(by='properties.datetime')
     
     return items_gdf
 

@@ -162,7 +162,7 @@ def lazy_merge_arrays(
 def prepare_data(
     items_gdf: gpd.GeoDataFrame,
     geometry: BaseGeometry,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
@@ -191,7 +191,7 @@ def prepare_data(
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
@@ -388,7 +388,7 @@ def prepare_data(
 def query_and_prepare(
     collections: Union[str, List[str]],
     geometry: BaseGeometry,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
@@ -399,8 +399,8 @@ def query_and_prepare(
     enable_time_dim: bool = False,
     time_col: Optional[str] = 'properties.datetime',
     time_format_str: Optional[str] = None,
+    max_workers: int = 1,
     enable_progress_bar: bool = False,
-    return_in_wgs84: bool = False,
     return_items: bool = False,
     query_kwargs: Optional[Dict[str, Any]] = None,
     rioxarray_kwargs: Optional[Dict[str, Any]] = None,
@@ -418,7 +418,7 @@ def query_and_prepare(
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Coordinate reference system for the input/output.
     datetime : str, default '2000-01-01/2025-01-01'
         Date/time range for the query in ISO 8601 format or interval.
@@ -440,10 +440,10 @@ def query_and_prepare(
         Column name for datetime in items_gdf.
     time_format_str : str, optional
         Format string for parsing datetime values.
+    max_workers : int, default 1
+        Number of parallel workers to use (-1 uses all available CPUs).
     enable_progress_bar : bool, default False
         Whether to display a progress bar during merging.
-    return_in_wgs84 : bool, default False
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
     return_items : bool, default False
         If True, also return the items GeoDataFrame.
     query_kwargs : dict, optional
@@ -466,7 +466,6 @@ def query_and_prepare(
         geometry=geometry,
         crs=crs,
         datetime=datetime,
-        return_in_wgs84=return_in_wgs84,
         **query_kwargs if query_kwargs is not None else {}
     )
     
@@ -483,6 +482,7 @@ def query_and_prepare(
         enable_time_dim=enable_time_dim,
         time_col=time_col,
         time_format_str=time_format_str,
+        max_workers=max_workers,
         enable_progress_bar=enable_progress_bar,
         **rioxarray_kwargs if rioxarray_kwargs is not None else {}
     )
@@ -497,7 +497,7 @@ def query_and_prepare(
 def prepare_timeseries(
     items_gdf: gpd.GeoDataFrame,
     geometry: BaseGeometry,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
@@ -524,7 +524,7 @@ def prepare_timeseries(
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
@@ -560,14 +560,25 @@ def prepare_timeseries(
     # need to handle case where chunks is passed, may not contain all dimensions
     # this is not strictly necessary, but it helps ensure that results are consistent
     # and expected as several functions will not assume dimensions like 'x', 'y', or 'time' are present
+    passed_chunks = chunks.copy() if chunks is not None else None
     chunks_no_time = None
     if chunks is not None and isinstance(chunks, Dict):
         if 'x' not in chunks:
             chunks['x'] = -1
         if 'y' not in chunks:
             chunks['y'] = -1
-            
+        
         chunks_no_time = {k: v for k, v in chunks.items() if k != 'time'}
+        if all([isinstance(b, str) for b in bands]):
+            # as bands are stored in different files, need to remove the band
+            # from chunk parameters when reading (can't chunk by band when only 
+            # reading a file with a single band)
+            if 'band' in chunks_no_time:
+                chunks_no_time.pop('band')
+    
+    elif chunks is not None and isinstance(chunks, str):
+        # if chunks is a string, we assume it is a dask chunking string like 'auto'
+        chunks_no_time = chunks
     
     if time_col not in items_gdf.columns:
         raise ValueError(f"Column '{time_col}' not found in items_gdf. Please provide a valid time column.")
@@ -622,25 +633,6 @@ def prepare_timeseries(
             **rioxarray_kwargs,           
         )
         
-        # with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        #     groups = list(items_gdf.groupby(time_col))
-            
-        #     futures = [executor.submit(worker, items_gdf=gpd.GeoDataFrame(group_gdf)) for _, group_gdf in groups]
-            
-        #     das = []
-        #     with tqdm(
-        #         as_completed(futures),
-        #         desc="Processing items" if chunks_no_time is None else "Constructing dask computation graph",
-        #         unit="timestep",
-        #         total=len(groups),
-        #         disable=not enable_progress_bar,
-        #     ) as progress:
-        #         for future in progress:
-        #             try:
-        #                 da = future.result()
-        #                 das.append(da)
-        #             except Exception as e:
-        #                 warn(f"Failed to process a group with error: {e}. Skipping this group.")
         groups = list(items_gdf.groupby(time_col))
         
         # Handle exceptions by wrapping the worker function
@@ -664,7 +656,22 @@ def prepare_timeseries(
         das = [da for da in das if da is not None]
     
     da = xr.concat(das, dim='time').sortby('time')
-    if chunks is not None and da.chunks != chunks:
-        return da.chunk(chunks)
+
+    if passed_chunks is not None and isinstance(passed_chunks, dict):
+        # Only compare specified dimensions
+        needs_rechunk = False
+        for dim, target in passed_chunks.items():
+            current = da.chunksizes.get(dim)
+            # If -1, treat as "all in one chunk"
+            if target == -1:
+                target = da.sizes[dim]
+            if current is None or current[0] != target:
+                needs_rechunk = True
+                break
+        if needs_rechunk:
+            da = da.chunk(passed_chunks)
+    
+    elif passed_chunks is not None and isinstance(passed_chunks, str):
+        da = da.chunk(passed_chunks)
     
     return da

@@ -18,23 +18,6 @@ import os
 from typing import Union
 import xarray as xr
 
-# def safe_open_raster(
-#     url: str,
-#     timeout: float = 600.0,
-#     **rioxarray_kwargs: Optional[Dict[str, Any]]
-# ) -> xr.DataArray:
-
-#     # Set GDAL timeout envs defensively to avoid subtle hangs
-#     os.environ.setdefault("GDAL_HTTP_TIMEOUT", "10")
-#     os.environ.setdefault("CPL_VSIL_CURL_MAX_RETRY", "3")
-#     os.environ.setdefault("CPL_VSIL_CURL_RETRY_DELAY", "2")
-
-#     def worker():
-#         return rioxarray.open_rasterio(url, **rioxarray_kwargs)
-
-#     with ThreadPoolExecutor(max_workers=1) as executor:
-#         future = executor.submit(worker)
-#         return future.result(timeout=timeout)
 
 
 
