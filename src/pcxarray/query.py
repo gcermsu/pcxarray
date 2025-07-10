@@ -23,24 +23,24 @@ def safe_pc_search(
 ) -> List[Item]:
     """
     Perform a STAC search with a wall-clock timeout using a thread.
-    
-    This function executes a STAC API search in a separate thread and enforces
-    a maximum wall-clock timeout. If the search does not complete within the
-    specified timeout, a TimeoutError is raised. This is useful for preventing
-    long-running or hanging queries from blocking the main process.
-    
+
+    Executes a STAC API search in a separate thread and enforces a maximum wall-clock 
+    timeout. If the search does not complete within the specified timeout, a TimeoutError 
+    is raised. This is useful for preventing long-running or hanging queries from 
+    blocking the main process.
+
     Parameters
     ----------
     search_kwargs : dict
         Dictionary of keyword arguments to pass to pystac_client.Client.search.
-    timeout : float, default 300.0
+    timeout : float, default=300.0
         Maximum time in seconds to wait for the search to complete.
-    
+
     Returns
     -------
     list of pystac.Item
         List of STAC items returned by the search.
-    
+
     Raises
     ------
     concurrent.futures.TimeoutError
@@ -73,41 +73,45 @@ def pc_query(
 ) -> gpd.GeoDataFrame:
     """
     Query the Planetary Computer STAC API and return results as a GeoDataFrame.
-    
-    This function searches the Planetary Computer STAC catalog for items matching
-    the specified criteria. The input geometry is transformed to WGS84 for the query,
-    and results are returned in either WGS84 or the original input CRS.
-    
+
+    Searches the Planetary Computer STAC catalog for items matching the specified 
+    criteria. The input geometry is transformed to WGS84 for the query, and results 
+    are returned in either WGS84 or the original input CRS.
+
     Parameters
     ----------
     collections : str or list of str
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry for spatial filtering.
-    crs : pyproj.CRS, str, or int, default 4326
+    crs : pyproj.CRS, str or int, default=4326
         Coordinate reference system of the input geometry.
-    datetime : str, default '2000-01-01/2025-01-01'
+    datetime : str, default='2000-01-01/2025-01-01'
         Date/time range for temporal filtering in ISO 8601 format or interval.
-    max_retries : int, default 5
+    max_retries : int, default=5
         Maximum number of retries for the STAC search in case of failure.
     **query_kwargs : dict, optional
-        Additional query parameters to pass to the STAC search (e.g., 'query' for property filtering, 'limit' for result count limits).
-    
+        Additional query parameters to pass to the STAC search (e.g., 'query' for 
+        property filtering, 'limit' for result count limits).
+
     Returns
     -------
     geopandas.GeoDataFrame
-        GeoDataFrame containing the query results with flattened STAC item properties. Contains a 'geometry' column with item footprints and additional columns for item metadata. The 'properties.datetime' column is converted to pandas datetime if present.
-    
+        GeoDataFrame containing the query results with flattened STAC item properties. 
+        Contains a 'geometry' column with item footprints and additional columns 
+        for item metadata. The 'properties.datetime' column is converted to pandas 
+        datetime if present.
+
     Warns
     -----
     UserWarning
         If no items are found for the given query criteria.
-    
+
     Notes
     -----
-    - The function automatically handles CRS transformation between the input CRS and WGS84
-    - STAC item properties are flattened using dot notation (e.g., 'properties.datetime')
-    - Datetime values are rounded to milliseconds for netCDF/Zarr compatibility
+    - The function automatically handles CRS transformation between the input CRS and WGS84.
+    - STAC item properties are flattened using dot notation (e.g., 'properties.datetime').
+    - Datetime values are rounded to milliseconds for netCDF/Zarr compatibility.
     """
     transformer = Transformer.from_crs(
         crs,
@@ -170,6 +174,21 @@ def pc_query(
 
 
 def get_pc_collections(reduced: bool = True, crs: Union[CRS, str, int] = 4326) -> gpd.GeoDataFrame:
+    """
+    Get Planetary Computer STAC collections as a GeoDataFrame.
+
+    Parameters
+    ----------
+    reduced : bool, default=True
+        If True, keep only essential fields in the output.
+    crs : pyproj.CRS, str or int, default=4326
+        Coordinate reference system for the output GeoDataFrame.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame of STAC collections with geometry column.
+    """
     
     client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
     collections = list(client.get_collections())
@@ -206,4 +225,4 @@ def get_pc_collections(reduced: bool = True, crs: Union[CRS, str, int] = 4326) -
     if crs is not None:
         gdf = gdf.to_crs(crs)
     return gdf
-    
+

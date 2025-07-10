@@ -6,13 +6,14 @@ import tempfile
 def get_cache_dir():
     """
     Get or create a cache directory for pcxarray.
-    
-    The cache directory is platform-dependent and is created if it does not exist.
-    On Unix-like systems, it defaults to ~/.cache/pcxarray or $XDG_CACHE_HOME/pcxarray.
-    On Windows, it uses %LOCALAPPDATA%/pcxarray or the system temp directory as fallback.
-    The cache directory is used by joblib.Memory to store persistent function call results,
-    particularly for expensive operations like downloading Census shapefiles.
-    
+
+    The cache directory is platform-dependent and is created if it does not exist. 
+    On Unix-like systems, it defaults to ~/.cache/pcxarray or $XDG_CACHE_HOME/pcxarray. 
+    On Windows, it uses %LOCALAPPDATA%/pcxarray or the system temp directory as 
+    fallback. The cache directory is used by joblib.Memory to store persistent function
+    call results, particularly for expensive operations like downloading Census 
+    shapefiles.
+
     Returns
     -------
     str
@@ -38,9 +39,9 @@ cache = memory.cache
 """
 Decorator for caching function outputs to disk using joblib.Memory.
 
-Use as @cache above a function to persist its results between runs.
-The cache is stored in a platform-appropriate directory and helps avoid
-repeated expensive operations like downloading data.
+Use as @cache above a function to persist its results between runs. The cache is 
+stored in a platform-appropriate directory and helps avoid repeated expensive operations 
+like downloading data.
 
 Returns
 -------
