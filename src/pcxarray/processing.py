@@ -113,7 +113,7 @@ def lazy_merge_arrays(
     if isinstance(resampling_method, Resampling):
         resampling_method = resampling_method.name.lower()
     
-    # reproject all arrays to the rekli=ommon geobox
+    # reproject all arrays to a common geobox
     nodata = nodata if nodata is not None else arrays[0].rio.nodata
     if nodata is not None and not np.isnan(nodata):
         arrays = [da.where(da != nodata) for da in arrays]  # mask nodata values
@@ -247,10 +247,10 @@ def prepare_data(
     selected_items = []
     if len(items_full_overlap) >= 1: # single item, no need to merge
         da = None
-        for item in items_full_overlap:
+        for _, item in items_full_overlap.iterrows():
             try:
                 da = read_single_item(
-                    item_gs=items_full_overlap.iloc[0],
+                    item_gs=item,
                     geometry=geometry,
                     bands=bands,
                     chunks=chunks,

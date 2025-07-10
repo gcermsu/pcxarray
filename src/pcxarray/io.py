@@ -11,9 +11,6 @@ import planetary_computer
 from typing import List, Dict, Any, Union
 import odc.geo.xr
 from odc.geo.geom import Geometry
-
-from concurrent.futures import ProcessPoolExecutor, TimeoutError
-import rioxarray
 import os
 from typing import Union
 import xarray as xr
@@ -56,8 +53,6 @@ def load_from_url(
         Whether to include all pixels touched by the geometry during clipping.
     max_retries : int, default 5
         Maximum number of attempts to load the raster in case of failure.
-    timeout : float, default 60.0
-        Maximum time in seconds to wait for the raster to load. Set to -1 to disable timeout.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to rioxarray.open_rasterio.
     
