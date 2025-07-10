@@ -1,12 +1,15 @@
-# pcxarray
-[![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+# pcxarray 
 
-**Planetary Computer + Xarray**: A Python package for seamless querying, downloading, and processing of Microsoft Planetary Computer raster data using GeoPandas and Xarray.
+A Python package for seamless querying, downloading, and processing of Microsoft Planetary Computer raster data using GeoPandas and Xarray.
+
+[![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
+[![Downloads](https://pepy.tech/badge/pcxarray)](https://pepy.tech/project/pcxarray)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
 
 ## Overview
 
-`pcxarray` bridges the gap between Microsoft's Planetary Computer STAC API and modern Python geospatial workflows. It enables querying satellite imagery using simple geometries and automatically loads the results as analysis-ready xarray DataArrays with proper spatial reference handling, mosaicking, and preprocessing. This package is designed to work seamlessly with Dask for lazy execution and distributed processing, making it ideal for large-scale geospatial data analysis.
+`pcxarray` (Planetary Computer + xarray) bridges the gap between Microsoft's Planetary Computer Data Catalog and modern Python geospatial workflows. It enables querying satellite imagery using simple geometries and automatically loads the results as analysis-ready xarray DataArrays with proper spatial reference handling, mosaicking, and preprocessing. This package is designed to work seamlessly with Dask for lazy execution and distributed processing, making it ideal for large-scale geospatial data analysis.
 
 ### Key Concepts
 
@@ -42,6 +45,8 @@ python -m pip install -e ".[dev]"
 ```
 
 ## Core Workflow
+
+For a comprehensive quickstart guide, see the [HLS time series example](examples/hls_timeseries.ipynb) [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
 
 The typical `pcxarray` workflow follows three main steps:
 
@@ -192,11 +197,11 @@ Use `get_pc_collections()` to discover available collections. Note that not all 
 
 Explore these comprehensive examples in the [`examples/`](examples/) directory:
 
-- **[`naip.ipynb`](examples/naip.ipynb.ipynb)**: NAIP imagery processing with grid creation
-- **[`hls_timeseries.ipynb`](examples/hls_timeseries.ipynb)**: Water quality monitoring with HLS data
-- **[`sentinel2_timeseries.ipynb`](examples/sentinel2_timeseries.ipynb)**: Vegetation monitoring with Sentinel-2
-- **[`landsat_timeseries.ipynb`](examples/landsat_timeseries.ipynb)**: Long-term change analysis with Landsat
-- **[`gnatsgo.ipynb`](examples/gnatsgo.ipynb)**: Soil productivity mapping
+- **[`hls_timeseries.ipynb`](examples/hls_timeseries.ipynb)**: Water quality monitoring with HLS data [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
+- **[`naip.ipynb`](examples/naip.ipynb)**: NAIP imagery processing with grid creation [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/naip.ipynb)
+- **[`sentinel2_timeseries.ipynb`](examples/sentinel2_timeseries.ipynb)**: Vegetation monitoring with Sentinel-2 [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/sentinel2_timeseries.ipynb)
+- **[`landsat_timeseries.ipynb`](examples/landsat_timeseries.ipynb)**: Long-term change analysis with Landsat [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/landsat_timeseries.ipynb)
+- **[`gnatsgo.ipynb`](examples/gnatsgo.ipynb)**: Soil productivity mapping [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/gnatsgo.ipynb)
 
 ## API Reference
 
@@ -212,3 +217,7 @@ help(pcx.prepare_data)  # View function signature and docstring
 - Chunking along `band` or `time` dimension when preparing timeseries datasets can trigger rechunks, which may be undesirable.
 - Some collections may have different metadata schemas causing issues. If an issue is encountered, please open an issue on GitHub.
 - When using Dask distributed scheduler, `open_rasterio` tasks may get stuck and prevent the computation graph from fully executing. Initializing the Dask client with `processes=True` seems to resolve this.
+
+## Acknowledgements
+
+This package is developed and maintained by the [GCERLab](https://www.gcerlab.com/) group at Mississippi State University. We welcome contributions and feedback from the community. If you find any issues or have feature requests, please open an issue on GitHub. Pull requests are also welcome!
