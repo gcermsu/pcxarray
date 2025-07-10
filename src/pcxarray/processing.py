@@ -15,7 +15,6 @@ import numpy as np
 from odc.geo.geobox import GeoBox
 from odc.geo.geom import Geometry
 import odc.geo.xr
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from joblib import Parallel, delayed
 
 from .query import pc_query

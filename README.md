@@ -6,11 +6,11 @@
 
 ## Overview
 
-`pcxarray` bridges the gap between Microsoft's Planetary Computer STAC API and modern Python geospatial workflows. It enables you to query satellite imagery using simple geometries and automatically load the results as analysis-ready xarray DataArrays with proper spatial reference handling, mosaicking, and preprocessing.
+`pcxarray` bridges the gap between Microsoft's Planetary Computer STAC API and modern Python geospatial workflows. It enables querying satellite imagery using simple geometries and automatically loads the results as analysis-ready xarray DataArrays with proper spatial reference handling, mosaicking, and preprocessing. This package is designed to work seamlessly with Dask for lazy execution and distributed processing, making it ideal for large-scale geospatial data analysis.
 
 ### Key Concepts
 
-- **Geometry-based queries**: Use any shapely geometry to define your area of interest
+- **Geometry-based queries**: Use any shapely geometry to define areas of interest
 - **Automatic spatial processing**: Handle reprojection, resampling, and mosaicking transparently  
 - **Dask integration**: Lazy loading and parallel processing for large datasets
 - **Analysis-ready data**: Get properly georeferenced xarray DataArrays ready for analysis
@@ -45,14 +45,14 @@ python -m pip install -e ".[dev]"
 
 The typical `pcxarray` workflow follows three main steps:
 
-### 1. Define Your Area of Interest
+### 1. Define Area of Interest
 
 ```python
 from shapely.geometry import Polygon
 import geopandas as gpd
 
 # Create a geometry (CRS is important - results will match this CRS)
-geom = Polygon([...])  # Your area of interest
+geom = Polygon([...])  # Area of interest
 gdf = gpd.GeoDataFrame({"geometry": [geom]}, crs="EPSG:4326")
 gdf = gdf.to_crs("EPSG:32616")  # Project to appropriate UTM zone
 roi_geom = gdf.geometry.values[0]
@@ -151,6 +151,8 @@ ndvi = (timeseries.sel(band="nir08") - timeseries.sel(band="green")) / \
 monthly_ndvi = ndvi.resample(time="1M").mean().persist() # use lazy execution
 ```
 
+For more complete examples, see the [`examples/`](examples/) directory.
+
 ## Working with Large Datasets
 
 `pcxarray` is designed for Dask's lazy execution model, making it efficient for large datasets:
@@ -159,7 +161,7 @@ monthly_ndvi = ndvi.resample(time="1M").mean().persist() # use lazy execution
 from distributed import Client
 
 # Start Dask client for parallel processing
-client = Client(n_workers=4, memory_limit="4GB")
+client = Client(processes=True)
 
 # Prepare timeseries (creates computation graph, doesn't load data)
 da = prepare_timeseries(
@@ -196,7 +198,17 @@ Explore these comprehensive examples in the [`examples/`](examples/) directory:
 - **[`landsat_timeseries.ipynb`](examples/landsat_timeseries.ipynb)**: Long-term change analysis with Landsat
 - **[`gnatsgo.ipynb`](examples/gnatsgo.ipynb)**: Soil productivity mapping
 
+## API Reference
+
+Documentation is currently unavailable, but each function should have descriptive docstrings and full type hints. Use python's built-in `help()` function or IDE tooltips to explore available methods and parameters.
+
+```python
+import pcxarray as pcx
+help(pcx.prepare_data)  # View function signature and docstring
+```
+
 ## Known Issues
 
-- Inconsistent chunking behavior when passing `bands` dimension in `chunks` dict in `prepare_data`
+- Chunking along `band` or `time` dimension when preparing timeseries datasets can trigger rechunks, which may be undesirable.
 - Some collections may have different metadata schemas causing issues. If an issue is encountered, please open an issue on GitHub.
+- When using Dask distributed scheduler, `open_rasterio` tasks may get stuck and prevent the computation graph from fully executing. Initializing the Dask client with `processes=True` seems to resolve this.

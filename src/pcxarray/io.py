@@ -24,7 +24,7 @@ def load_from_url(
     url: str,
     bands: Optional[List[int]] = None,
     geometry: Optional[BaseGeometry] = None,
-    crs: Union[CRS, str] = '4326',
+    crs: Union[CRS, str, int] = 4326,
     chunks: Optional[Dict[str, int]] = None,
     clip_to_geometry: bool = False,
     all_touched: bool = False,
@@ -46,7 +46,7 @@ def load_from_url(
         List of band indices to select. If None, all bands are loaded.
     geometry : shapely.geometry.base.BaseGeometry, optional
         Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Coordinate reference system for clipping. Does not reproject the raster.
     chunks : dict, optional
         Chunking options for dask/xarray.
@@ -113,7 +113,7 @@ def read_single_item(
     item_gs: gpd.GeoSeries,
     bands: Optional[List[Union[str, int]]] = None,
     geometry: Optional[BaseGeometry] = None,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     chunks: Optional[Dict[str, int]] = None,
     clip_to_geometry: bool = True,
     all_touched: bool = False,
@@ -134,7 +134,7 @@ def read_single_item(
         Band names or indices to select. If strings, must match asset keys. If None, all valid bands are loaded.
     geometry : shapely.geometry.base.BaseGeometry, optional
         Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
-    crs : pyproj.CRS or str, default 4326
+    crs : pyproj.CRS, str, or int, default 4326
         Output coordinate reference system for clipping. Does not reproject the raster.
     chunks : dict, optional
         Chunking options for dask/xarray.
