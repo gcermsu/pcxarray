@@ -192,7 +192,7 @@ Use `get_pc_collections()` to discover available collections. Note that not all 
 
 Explore these comprehensive examples in the [`examples/`](examples/) directory:
 
-- **[`naip_demo.ipynb`](naip_demo.ipynb)**: NAIP imagery processing with grid creation
+- **[`naip.ipynb`](examples/naip.ipynb.ipynb)**: NAIP imagery processing with grid creation
 - **[`hls_timeseries.ipynb`](examples/hls_timeseries.ipynb)**: Water quality monitoring with HLS data
 - **[`sentinel2_timeseries.ipynb`](examples/sentinel2_timeseries.ipynb)**: Vegetation monitoring with Sentinel-2
 - **[`landsat_timeseries.ipynb`](examples/landsat_timeseries.ipynb)**: Long-term change analysis with Landsat
