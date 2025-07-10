@@ -11,9 +11,28 @@ Add your content using ``reStructuredText`` syntax. See the
 documentation for details.
 
 
+Overview
+========
+
+Welcome to the pcxarray documentation!
+
+Examples
+--------
+
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference
+
+   ../examples/hls_timeseries
+   ../examples/naip
+   ../examples/landsat_timeseries
+   ../examples/landsat_s2_comparison
+   ../examples/gnatsgo
+
+Modules
+-------
+
+.. toctree::
+   :maxdepth: 2
 
    pcxarray.query
    pcxarray.processing

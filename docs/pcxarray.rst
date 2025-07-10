@@ -4,45 +4,14 @@ pcxarray package
 Submodules
 ----------
 
-pcxarray.cache module
----------------------
+.. toctree::
+   :maxdepth: 4
 
-.. automodule:: pcxarray.cache
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-pcxarray.io module
-------------------
-
-.. automodule:: pcxarray.io
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-pcxarray.processing module
---------------------------
-
-.. automodule:: pcxarray.processing
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-pcxarray.query module
----------------------
-
-.. automodule:: pcxarray.query
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-pcxarray.utils module
----------------------
-
-.. automodule:: pcxarray.utils
-   :members:
-   :show-inheritance:
-   :undoc-members:
+   pcxarray.cache
+   pcxarray.io
+   pcxarray.processing
+   pcxarray.query
+   pcxarray.utils
 
 Module contents
 ---------------

@@ -1,6 +1,13 @@
 import os
 import sys
+import shutil
 sys.path.insert(0, os.path.abspath('../src'))
+
+# Copy notebooks into docs/examples before build
+examples_src = os.path.abspath('../examples')
+examples_dst = os.path.abspath('examples')
+if not os.path.exists(examples_dst):
+    shutil.copytree(examples_src, examples_dst)
 
 # Configuration file for the Sphinx documentation builder.
 #
@@ -26,6 +33,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',  # For Google/Numpy style docstrings
     'numpydoc',
+    'nbsphinx',  
 ]
 autodoc_default_options = {
     'members': True,
@@ -37,5 +45,6 @@ autodoc_default_options = {
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
+# html_theme = 'alabaster'
+html_theme = "sphinx_rtd_theme"
 html_static_path = ['_static']

@@ -36,7 +36,8 @@ dev = [
     "twine",
     "sphinx",
     "numpydoc",
-    "sphinx-rtd-theme"
+    "sphinx-rtd-theme",
+    "nbsphinx"
 ]
 
 [build-system]
