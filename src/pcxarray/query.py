@@ -1,159 +1,113 @@
-import multiprocessing
-import requests
-from typing import Optional, List, Dict, Any, Union
-
+from time import sleep
 import shapely
 from pystac import Item
-import pystac_client
-import planetary_computer
+from pystac_client import Client
+import pandas as pd
 import geopandas as gpd
 from pyproj import Transformer, CRS, transform
-import rioxarray as rxr
-from rioxarray.merge import merge_arrays
-from rasterio.enums import Resampling
-from tqdm import tqdm
 from shapely.ops import transform
-from shapely import from_geojson, to_geojson
+from shapely import from_geojson
+from shapely.geometry import box
 from warnings import warn
-from .utils import flatten_dict
+from concurrent.futures import ThreadPoolExecutor
+from .utils import _flatten_dict
+from .cache import cache
+from joblib import expires_after
+from typing import Optional, List, Dict, Any, Union
 
 
-class TimeoutSession(requests.Session):
-    """
-    A requests.Session subclass that sets a default timeout for HTTP requests.
-    """
-    def request(self, *args, **kwargs):
-        """
-        Make a request with a default timeout of 5 seconds if not specified.
-
-        Parameters
-        ----------
-        *args : tuple
-            Positional arguments passed to the parent request method.
-        **kwargs : dict
-            Keyword arguments passed to the parent request method.
-
-        Returns
-        -------
-        requests.Response
-            The response object.
-        """
-        kwargs.setdefault("timeout", 5)  # Seconds: HTTP-level timeout
-        return super().request(*args, **kwargs)
-
-
-def _pc_query_worker(search_kwargs: Dict[str, Any], queue: multiprocessing.Queue):
-    """
-    Worker function to perform a Planetary Computer STAC search in a separate process.
-
-    Parameters
-    ----------
-    search_kwargs : dict
-        Arguments passed to Client.search().
-    queue : multiprocessing.Queue
-        Queue to put the result or exception.
-    """
-    # Inject timeout-aware session
-    pystac_client.client.requests = TimeoutSession()
-
-    try:
-        catalog = pystac_client.Client.open(
-            "https://planetarycomputer.microsoft.com/api/stac/v1",
-        )
-
-        search = catalog.search(**search_kwargs)
-        items = list(search.items())
-        queue.put(items)
-        
-    except Exception as e:
-        queue.put(e)
-
-
+# @cache(cache_validation_callback=expires_after(minutes=15))
 def safe_pc_search(
     search_kwargs: Dict[str, Any],
-    timeout: float = 120.0
-) -> Optional[List[Item]]:
+    timeout: float = 300.0
+) -> List[Item]:
     """
-    Executes a Planetary Computer STAC search query with enforced timeout and safe interruption.
-
+    Perform a STAC search with a wall-clock timeout using a thread.
+    
+    This function executes a STAC API search in a separate thread and enforces
+    a maximum wall-clock timeout. If the search does not complete within the
+    specified timeout, a TimeoutError is raised. This is useful for preventing
+    long-running or hanging queries from blocking the main process.
+    
     Parameters
     ----------
     search_kwargs : dict
-        Arguments passed to Client.search(). Example:
-        {
-            "collections": ["naip"],
-            "intersects": {...},
-            "datetime": "2000-01-01/2025-01-01"
-        }
-    timeout : float, optional
-        Wall-clock timeout in seconds (default is 120 seconds).
-
+        Dictionary of keyword arguments to pass to pystac_client.Client.search.
+    timeout : float, default 300.0
+        Maximum time in seconds to wait for the search to complete.
+    
     Returns
     -------
-    Optional[List[Item]]
-        List of STAC Items if successful, or None on timeout/failure.
-
+    list of pystac.Item
+        List of STAC items returned by the search.
+    
     Raises
     ------
-    TimeoutError
-        If the query exceeds the specified timeout.
+    concurrent.futures.TimeoutError
+        If the search does not complete within the specified timeout.
     Exception
-        If an error occurs during the query.
+        Any exception raised during the search will be propagated.
     """
-    ctx = multiprocessing.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=_pc_query_worker, args=(search_kwargs, queue))
+    
+    def worker():
+        catalog = Client.open(
+            "https://planetarycomputer.microsoft.com/api/stac/v1",
+        )
+        search = catalog.search(**search_kwargs)
+        return list(search.items())
 
-    proc.start()
-    proc.join(timeout=timeout)
-
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-        raise TimeoutError(f"Planetary Computer STAC query timed out after {timeout} seconds.")
-
-    result = queue.get()
-    if isinstance(result, Exception):
-        raise result
-
-    return result
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(worker)
+        return future.result(timeout=timeout)
 
 
+
+@cache(cache_validation_callback=expires_after(minutes=15))
 def pc_query(
     collections: Union[str, List[str]],
     geometry: shapely.geometry.base.BaseGeometry,
-    crs: Union[CRS, str] = 4326,
+    crs: Union[CRS, str, int] = 4326,
     datetime: str = "2000-01-01/2025-01-01",
-    query_kwargs: Optional[Dict[str, Any]] = None,
-    return_in_wgs84: bool = False,
+    max_retries: int = 5,
+    **query_kwargs: Optional[Dict[str, Any]],
 ) -> gpd.GeoDataFrame:
     """
     Query the Planetary Computer STAC API and return results as a GeoDataFrame.
-
+    
+    This function searches the Planetary Computer STAC catalog for items matching
+    the specified criteria. The input geometry is transformed to WGS84 for the query,
+    and results are returned in either WGS84 or the original input CRS.
+    
     Parameters
     ----------
     collections : str or list of str
-        Collection(s) to search.
+        Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
-        Area of interest geometry.
-    crs : Union[CRS, str], optional
-        Coordinate reference system of the input geometry (default is 4326).
-    datetime : str, optional
-        Date/time range for the query (default is '2000-01-01/2025-01-01').
-    query_kwargs : dict, optional
-        Additional query parameters to pass to the search.
-    return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
-
+        Area of interest geometry for spatial filtering.
+    crs : pyproj.CRS, str, or int, default 4326
+        Coordinate reference system of the input geometry.
+    datetime : str, default '2000-01-01/2025-01-01'
+        Date/time range for temporal filtering in ISO 8601 format or interval.
+    max_retries : int, default 5
+        Maximum number of retries for the STAC search in case of failure.
+    **query_kwargs : dict, optional
+        Additional query parameters to pass to the STAC search (e.g., 'query' for property filtering, 'limit' for result count limits).
+    
     Returns
     -------
     geopandas.GeoDataFrame
-        GeoDataFrame of the query results.
-
-    Raises
-    ------
-    Warning
-        If no items are found for the given query.
+        GeoDataFrame containing the query results with flattened STAC item properties. Contains a 'geometry' column with item footprints and additional columns for item metadata. The 'properties.datetime' column is converted to pandas datetime if present.
+    
+    Warns
+    -----
+    UserWarning
+        If no items are found for the given query criteria.
+    
+    Notes
+    -----
+    - The function automatically handles CRS transformation between the input CRS and WGS84
+    - STAC item properties are flattened using dot notation (e.g., 'properties.datetime')
+    - Datetime values are rounded to milliseconds for netCDF/Zarr compatibility
     """
     transformer = Transformer.from_crs(
         crs,
@@ -164,20 +118,36 @@ def pc_query(
         transformer.transform,
         geometry,
     )
-    aoi = to_geojson(geom_84).replace("'", '"')
     
-    pystac_items = safe_pc_search({
+    aoi = geom_84.__geo_interface__
+    query = {
         "collections": collections if isinstance(collections, list) else [collections],
         "intersects": aoi,
-        "datetime": datetime,
-    } | (query_kwargs or {})) # Merge with any additional query parameters
+        "datetime": str(datetime), # cast datetime to string
+    } | (query_kwargs or {})  # Merge with any additional query parameters
+    
+    retries = 0
+    while True:
+        try:
+            # Perform the STAC search with the given query parameters
+            pystac_items = safe_pc_search(query)
+            break  # Exit loop if search is successful
+        except Exception as e:
+            if retries >= max_retries:
+                raise RuntimeError(f"STAC search failed after {max_retries} retries: {type(e).__str__}: {e}") from e
+            
+            warn(f"STAC search failed: {type(e).__str__}: {e}. Retrying ({retries + 1}/{max_retries})...")
+            sleep(2 ** (retries + 1))  # Exponential backoff
+            retries += 1
     
     items = []
     for item in pystac_items:
         item_dict = item.to_dict()
         geometry = from_geojson(item_dict.pop('geometry').__str__().replace('\'', '"'))
+        if isinstance(geometry, shapely.geometry.MultiPolygon) and len(geometry.geoms) == 1:
+            geometry = geometry.geoms[0]
         item_dict['geometry'] = geometry
-        items.append(flatten_dict(item_dict))
+        items.append(_flatten_dict(item_dict))
     
     if len(items) == 0:
         warn("No items found for the given query. Returning empty GeoDataFrame.")
@@ -186,189 +156,54 @@ def pc_query(
         items_gdf = gpd.GeoDataFrame(items)
     
     items_gdf = items_gdf.set_crs(4326) # by default, planetary computer returns items in WGS84
-    if not return_in_wgs84:
-        items_gdf = items_gdf.to_crs(crs)
+    items_gdf = items_gdf.to_crs(crs) 
+    
+    # set datetime column if it exists
+    if 'properties.datetime' in items_gdf.columns:
+        items_gdf['properties.datetime'] = pd.to_datetime(items_gdf['properties.datetime'])
+        # round to milliseconds for compatibility with netcdf/zarr
+        items_gdf['properties.datetime'] = [t.tz_localize(None) for t in items_gdf['properties.datetime'].dt.round('ms')]
+        items_gdf['properties.datetime'] = items_gdf['properties.datetime'].astype('datetime64[ms]')
+        items_gdf = items_gdf.sort_values(by='properties.datetime').reset_index()
     
     return items_gdf
 
 
-def prepare_data(
-    geometry: shapely.geometry.base.BaseGeometry,
-    crs: Union[CRS, str] = 4326,
-    items_gdf = None,
-    masked = False,
-    chunks: Optional[Dict[str, Any]] = None,
-    target_resolution: Optional[float] = None,
-    all_touched: bool = False,
-    merge_method: str = 'max',
-    resampling_method: Resampling = Resampling.bilinear,
-    enable_progress_bar: bool = False,
-):
-    """
-    Prepare and merge raster data from Planetary Computer query results.
-
-    Parameters
-    ----------
-    geometry : shapely.geometry.base.BaseGeometry
-        Area of interest geometry.
-    crs : Union[CRS, str], optional
-        Coordinate reference system for the output (default is 4326).
-    items_gdf : geopandas.GeoDataFrame
-        GeoDataFrame of items to process.
-    masked : bool, optional
-        Whether to mask the raster data (default is False).
-    chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
-    target_resolution : float, optional
-        Target resolution for the output raster (default is None).
-    all_touched : bool, optional
-        Whether to include all pixels touched by the geometry (default is False).
-    merge_method : str, optional
-        Method to use when merging arrays (default is 'max').
-    resampling_method : rasterio.enums.Resampling, optional
-        Resampling method to use (default is Resampling.bilinear).
-    enable_progress_bar : bool, optional
-        Whether to display a progress bar during merging (default is False).
-
-    Returns
-    -------
-    xarray.DataArray
-        The prepared raster data as an xarray DataArray.
-    """
-    transformer = Transformer.from_crs(
-        crs,
-        CRS.from_epsg(4326),
-        always_xy=True,
-    )
-    geom_84 = transform(
-        transformer.transform,
-        geometry
-    )
+def get_pc_collections(reduced: bool = True, crs: Union[CRS, str, int] = 4326) -> gpd.GeoDataFrame:
     
-    items_gdf['percent_overlap'] = items_gdf.geometry.apply(lambda x: x.intersection(geom_84).area / geom_84.area)
-    items_full_overlap = items_gdf[items_gdf['percent_overlap'] == 1.0]
-
-    if len(items_full_overlap) > 1: # single item, no need to merge
-        
-        url = items_full_overlap.iloc[0]['assets.image.href']
-        signed_url = planetary_computer.sign(url)
-        image = rxr.open_rasterio(signed_url, masked=masked, chunks=chunks).rio.clip_box(*geometry.bounds, crs=crs).rio.clip([geometry], crs=crs)
-        
-    else: # multiple items, need to merge and reproject. 
-        items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
-        
-        remaining_geom = geom_84
-        remaining_area = 1.0
-        urls = []
-        while remaining_area > 0:
-            item_series = items_gdf.iloc[0]
-            url = item_series['assets.image.href']
-            urls.append(url)
-            
-            intersection = item_series.geometry.intersection(remaining_geom)
-            remaining_geom = remaining_geom.difference(intersection)
-            remaining_area = remaining_geom.area / geom_84.area
-            if remaining_area == 0:
-                break
-            
-            # remove item_series from items_gdf
-            items_gdf = items_gdf.iloc[1:]
-            if len(items_gdf) == 0:
-                break
-            
-            # now, recalculate the percent overlap for the remaining items
-            items_gdf['percent_overlap'] = items_gdf.geometry.apply(lambda x: x.intersection(remaining_geom).area / remaining_area)
-            items_gdf = items_gdf.sort_values(by='percent_overlap', ascending=False)
-        
-        image = None
-        for url in tqdm(urls, desc='Merging tiles', unit='tiles', disable=not enable_progress_bar):
-            signed_url = planetary_computer.sign(url)
-            xa = rxr.open_rasterio(signed_url, masked=masked, chunks=chunks).rio.clip_box(*geometry.bounds, crs=crs)
-            xa = xa.rio.clip([geometry], crs=crs, all_touched=True)
-            
-            if image is None:
-                image = xa
+    client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1")
+    collections = list(client.get_collections())
+    
+    collections_data = []
+    for collection in collections:
+        collection_dict = _flatten_dict(collection.to_dict())
+        geom = collection_dict.pop('extent.spatial.bbox', None)
+        if geom is not None:
+            if len(geom) == 1:
+                collection_dict['geometry'] = box(*geom[0])
             else:
-                image = merge_arrays([image, xa], method=merge_method)
-    
-    if target_resolution is None:
-        target_resolution = image.rio.resolution()[0]
-    
-    image = image.rio.reproject(
-        resolution=(target_resolution, target_resolution),
-        resampling=resampling_method,
-        dst_crs=crs,
-    ).rio.clip([geometry], crs=crs, all_touched=all_touched)
-    
-    return image
+                geoms = []
+                for g in geom:
+                    geoms.append(box(*g))
+                collection_dict['geometry'] = shapely.geometry.MultiPolygon(geoms)
 
-
-def query_and_prepare(
-    collections: Union[str, List[str]],
-    geometry: shapely.geometry.base.BaseGeometry,
-    crs: Union[CRS, str] = 4326,
-    datetime: str = "2000-01-01/2025-01-01",
-    query_kwargs: Optional[Dict[str, Any]] = None,
-    return_in_wgs84: bool = False,
-    masked: bool = False,
-    chunks: Optional[Dict[str, Any]] = None,
-    target_resolution: Optional[float] = None,
-    all_touched: bool = False,
-    return_items: bool = False
-) -> Union[gpd.GeoDataFrame, tuple]:
-    """
-    Query the Planetary Computer and prepare raster data in a single step.
-
-    Parameters
-    ----------
-    collections : str or list of str
-        Collection(s) to search.
-    geometry : shapely.geometry.base.BaseGeometry
-        Area of interest geometry.
-    crs : Union[CRS, str], optional
-        Coordinate reference system for the input/output (default is 4326).
-    datetime : str, optional
-        Date/time range for the query (default is '2000-01-01/2025-01-01').
-    query_kwargs : dict, optional
-        Additional query parameters to pass to the search.
-    return_in_wgs84 : bool, optional
-        If True, return results in WGS84 (EPSG:4326). Otherwise, return in the input CRS.
-    masked : bool, optional
-        Whether to mask the raster data (default is False).
-    chunks : dict, optional
-        Chunking options for dask/xarray (default is None).
-    target_resolution : float, optional
-        Target resolution for the output raster (default is None).
-    all_touched : bool, optional
-        Whether to include all pixels touched by the geometry (default is False).
-    return_items : bool, optional
-        If True, also return the items GeoDataFrame (default is False).
-
-    Returns
-    -------
-    xarray.DataArray or tuple
-        The prepared raster data, and optionally the items GeoDataFrame.
-    """
-    items_gdf = pc_query(
-        collections=collections,
-        geometry=geometry,
-        crs=crs,
-        datetime=datetime,
-        query_kwargs=query_kwargs,
-        return_in_wgs84=return_in_wgs84
-    )
+        else:
+            collection_dict['geometry'] = None
+            
+        if reduced:
+            # Keep only essential fields
+            collection_dict = {
+                'id': collection_dict.get('id', ''),
+                'title': collection_dict.get('title', ''),
+                'description': collection_dict.get('description', ''),
+                'license': collection_dict.get('license', ''),
+                'geometry': collection_dict.get('geometry', None),
+            }
+        
+        collections_data.append(collection_dict)
     
-    image = prepare_data(
-        geometry=geometry,
-        crs=crs,
-        items_gdf=items_gdf,
-        masked=masked,
-        chunks=chunks,
-        target_resolution=target_resolution,
-        all_touched=all_touched
-    )
+    gdf = gpd.GeoDataFrame(collections_data, crs=4326)
+    if crs is not None:
+        gdf = gdf.to_crs(crs)
+    return gdf
     
-    if not return_items:
-        return image
-    else:
-        return image, items_gdf
