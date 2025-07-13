@@ -6,8 +6,7 @@ sys.path.insert(0, os.path.abspath('../src'))
 # Copy notebooks into docs/examples before build
 examples_src = os.path.abspath('../examples')
 examples_dst = os.path.abspath('examples')
-if not os.path.exists(examples_dst):
-    shutil.copytree(examples_src, examples_dst)
+shutil.copytree(examples_src, examples_dst, dirs_exist_ok=True)
 
 # Configuration file for the Sphinx documentation builder.
 #
