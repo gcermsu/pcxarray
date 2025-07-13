@@ -30,11 +30,12 @@ def load_from_url(
 ) -> xr.DataArray:
     """
     Load a raster dataset from a URL and return it as an xarray DataArray.
-    
-    This function signs the provided URL using the Planetary Computer, opens the raster
-    using rioxarray, optionally selects bands, and clips to a geometry if provided.
-    The raster is returned in its original CRS, but can be clipped using the provided CRS.
-    
+
+    Signs the provided URL using the Planetary Computer, opens the raster using 
+    rioxarray, optionally selects bands, and clips to a geometry if provided. The 
+    raster is returned in its original CRS, but can be clipped using the provided 
+    CRS.
+
     Parameters
     ----------
     url : str
@@ -42,25 +43,26 @@ def load_from_url(
     bands : list of int, optional
         List of band indices to select. If None, all bands are loaded.
     geometry : shapely.geometry.base.BaseGeometry, optional
-        Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
-    crs : pyproj.CRS, str, or int, default 4326
+        Geometry to clip the raster data to. If provided, the raster is clipped 
+        to this geometry.
+    crs : pyproj.CRS, str or int, default=4326
         Coordinate reference system for clipping. Does not reproject the raster.
     chunks : dict, optional
         Chunking options for dask/xarray.
-    clip_to_geometry : bool, default False
+    clip_to_geometry : bool, default=False
         If True, apply a mask to the raster using the provided geometry.
-    all_touched : bool, default False
+    all_touched : bool, default=False
         Whether to include all pixels touched by the geometry during clipping.
-    max_retries : int, default 5
+    max_retries : int, default=5
         Maximum number of attempts to load the raster in case of failure.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to rioxarray.open_rasterio.
-    
+
     Returns
     -------
     xarray.DataArray
         The loaded (and optionally clipped) raster data.
-    
+
     Raises
     ------
     RuntimeError
@@ -116,34 +118,38 @@ def read_single_item(
 ) -> xr.DataArray:
     """
     Read a single STAC item into an xarray DataArray, selecting and concatenating bands as needed.
-    
-    This function identifies the appropriate asset URLs from a STAC item (GeoSeries),
-    loads each band as a DataArray, reprojects/resamples as needed, and concatenates
-    them along the 'band' dimension. If only one band is selected, returns a single DataArray.
-    
+
+    Identifies the appropriate asset URLs from a STAC item (GeoSeries), loads each 
+    band as a DataArray, reprojects/resamples as needed, and concatenates them along 
+    the 'band' dimension. If only one band is selected, returns a single DataArray.
+
     Parameters
     ----------
     item_gs : geopandas.GeoSeries
         A STAC item record with asset hrefs and metadata.
     bands : list of str or int, optional
-        Band names or indices to select. If strings, must match asset keys. If None, all valid bands are loaded.
+        Band names or indices to select. If strings, must match asset keys. If None, 
+        all valid bands are loaded.
     geometry : shapely.geometry.base.BaseGeometry, optional
-        Geometry to clip the raster data to. If provided, the raster is clipped to this geometry.
-    crs : pyproj.CRS, str, or int, default 4326
-        Output coordinate reference system for clipping. Does not reproject the raster.
+        Geometry to clip the raster data to. If provided, the raster is clipped 
+        to this geometry.
+    crs : pyproj.CRS, str or int, default=4326
+        Output coordinate reference system for clipping. Does not reproject the 
+        raster.
     chunks : dict, optional
         Chunking options for dask/xarray.
-    clip_to_geometry : bool, default True
+    clip_to_geometry : bool, default=True
         If True, apply a mask to the raster using the provided geometry.
-    all_touched : bool, default False
+    all_touched : bool, default=False
         Whether to include all pixels touched by the geometry during clipping.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments passed to rioxarray.open_rasterio.
-    
+
     Returns
     -------
     xarray.DataArray
-        If only one band is selected, returns a DataArray. If multiple bands, returns a concatenated DataArray along the 'band' dimension.
+        If only one band is selected, returns a DataArray. If multiple bands, returns 
+        a concatenated DataArray along the 'band' dimension.
     """
     
     ignored_assets = [

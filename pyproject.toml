@@ -34,6 +34,10 @@ Issues = "https://github.com/gcermsu/pcxarray/issues"
 dev = [
     "build",
     "twine",
+    "sphinx",
+    "numpydoc",
+    "sphinx-rtd-theme",
+    "nbsphinx"
 ]
 
 [build-system]

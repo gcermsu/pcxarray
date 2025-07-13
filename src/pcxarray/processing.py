@@ -1,6 +1,6 @@
 from functools import partial
 import os
-from typing import Optional, List, Dict, Any, Union
+from typing import Literal, Optional, List, Dict, Any, Union
 from warnings import warn
 import geopandas as gpd
 import pandas as pd
@@ -22,8 +22,8 @@ from .io import read_single_item
 
 
 def lazy_merge_arrays(
-    arrays: List[xr.DataArray], 
-    method: str = 'last',
+    arrays: List[xr.DataArray],
+    method: Literal['last', 'first', 'min', 'max', 'mean', 'sum', 'median'] = 'last',
     geom: Optional[BaseGeometry] = None,
     crs: Optional[Union[CRS, str]] = None,
     resolution: Optional[Union[float, int]] = None,
@@ -31,55 +31,50 @@ def lazy_merge_arrays(
     nodata: Optional[float] = None
 ) -> xr.DataArray:
     """
-    Merge multiple xarray DataArrays lazily
-    
-    This function reprojects all input arrays to a common geobox and then merges them using
-    the specified method. If geometry, CRS, or resolution are not provided, they are automatically
-    determined from the input arrays using the union of geometries, first CRS found, and minimum
-    resolution respectively. Unlike rioxarray.rio.reproject, this function does not trigger
-    a computation of the dask graph.
-    
+    Merge multiple xarray DataArrays lazily.
+
+    Reprojects all input arrays to a common geobox and then merges them using the 
+    specified method. If geometry, CRS, or resolution are not provided, they are 
+    automatically determined from the input arrays using the union of geometries, 
+    first CRS found, and minimum resolution respectively. Unlike rioxarray.rio.reproject, 
+    this function does not trigger a computation of the dask graph.
+
     Parameters
     ----------
-    arrays : List[xarray.DataArray]
-        List of georeferenced DataArrays to merge from rioxarray
-    method : str, default 'last'
-        Method for merging overlapping pixels. Options are:
-        - 'last': Use last non-NaN value (forward fill)  
-        - 'first': Use first non-NaN value (backward fill)
-        - 'min': Minimum value across arrays
-        - 'max': Maximum value across arrays
-        - 'mean': Mean value across arrays
-        - 'sum': Sum of values across arrays
-        - 'median': Median value across arrays
+    arrays : list of xarray.DataArray
+        List of georeferenced DataArrays to merge from rioxarray.
+    method : {'last', 'first', 'min', 'max', 'mean', 'sum', 'median'}, default='last'
+        Method for merging overlapping pixels.
     geom : shapely.geometry.base.BaseGeometry, optional
-        Target geometry for the merged array. If None, computed as union of all input array bounds.
-        Must be provided together with crs and resolution, or all three must be None.
+        Target geometry for the merged array. If None, computed as union of all 
+        input array bounds. Must be provided together with crs and resolution, or 
+        all three must be None.
     crs : pyproj.CRS or str, optional
-        Target coordinate reference system. If None, uses CRS from first input array.
-        Must be provided together with geom and resolution, or all three must be None.
+        Target coordinate reference system. If None, uses CRS from first input array. 
+        Must be provided together with geom and resolution, or all three must be 
+        None.
     resolution : float or int, optional
-        Target pixel resolution in CRS units. If None, uses minimum resolution from input arrays.
-        Must be provided together with geom and crs, or all three must be None.
+        Target pixel resolution in CRS units. If None, uses minimum resolution from 
+        input arrays. Must be provided together with geom and crs, or all three 
+        must be None.
     resampling_method : rasterio.enums.Resampling or str, default 'nearest'
-        Resampling method for reprojection. Can be Resampling enum or string name
-        (e.g., 'nearest', 'bilinear', 'cubic', etc.) See https://odc-geo.readthedocs.io/en/latest/_api/odc.geo.xr.ODCExtensionDa.reproject.html
-        for all available options.
+        Resampling method for reprojection. Can be Resampling enum or string name 
+        (e.g., 'nearest', 'bilinear', 'cubic', etc.).
     nodata : float, optional
         NoData value to use for masking. If None, uses the NoData value from the 
         first input array.
-    
+
     Returns
     -------
     xarray.DataArray
-        Merged DataArray reprojected to the common geobox with spatial coordinates
+        Merged DataArray reprojected to the common geobox with spatial coordinates 
         and CRS information preserved.
-        
+
     Raises
     ------
     ValueError
-        If only some of geom, crs, or resolution are provided (must be all or none).
-        If an unknown merge method is specified.
+        If only some of geom, crs, or resolution are provided (must be all or none),
+        or if an unknown merge method is specified.
     UserWarning
         If multiple CRS are found in input arrays (uses first one found).
     """
@@ -165,7 +160,7 @@ def prepare_data(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[Union[float, int]] = None,
     all_touched: bool = False,
-    merge_method: str = 'last',
+    merge_method: Literal['last', 'first', 'min', 'max', 'mean', 'sum', 'median'] = 'last',
     resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
@@ -177,55 +172,59 @@ def prepare_data(
 ) -> xr.DataArray:
     """
     Prepare and merge raster data from Planetary Computer query results.
-    
-    This function selects the minimum set of STAC items needed to cover a given geometry,
-    reads and mosaics raster tiles, and handles reprojection, resampling, and merging.
-    Items are selected using a greedy algorithm to minimize the number of tiles while
-    ensuring complete coverage. When a single item fully covers the geometry, no merging
-    is performed for efficiency.
-    
+
+    Selects the minimum set of STAC items needed to cover a given geometry, reads 
+    and mosaics raster tiles, and handles reprojection, resampling, and merging. 
+    Items are selected using a greedy algorithm to minimize the number of tiles 
+    while ensuring complete coverage. When a single item fully covers the geometry, 
+    no merging is performed for efficiency.
+
     Parameters
     ----------
     items_gdf : geopandas.GeoDataFrame
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : pyproj.CRS, str, or int, default 4326
+    crs : pyproj.CRS, str or int, default=4326
         Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
     target_resolution : float or int, optional
-        Target pixel size for the output raster in units of the CRS. If None, uses the native resolution of the first item.
-    all_touched : bool, default False
+        Target pixel size for the output raster in units of the CRS. If None, uses 
+        the native resolution of the first item.
+    all_touched : bool, default=False
         Whether to include all pixels touched by the geometry during final clipping.
-    merge_method : str, default 'last'
-        Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
+    merge_method : {'last', 'first', 'min', 'max', 'mean', 'sum', 'median'}, default='last'
+        Method to use when merging overlapping arrays.
+    resampling_method : rasterio.enums.Resampling or str, default='nearest'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
         Chunking options for dask/xarray.
-    enable_time_dim : bool, default False
-        If True, add a time dimension to the output. All selected items must have the same datetime value.
-    time_col : str, default 'properties.datetime'
+    enable_time_dim : bool, default=False
+        If True, add a time dimension to the output. All selected items must have 
+        the same datetime value.
+    time_col : str, default='properties.datetime'
         Column name for datetime in items_gdf.
     time_format_str : str, optional
         Format string for parsing datetime values.
-    max_workers : int, default 1
+    max_workers : int, default=1
         Number of parallel workers to use (-1 uses all available CPUs).
-    enable_progress_bar : bool, default False
+    enable_progress_bar : bool, default=False
         Whether to display a progress bar during tile merging.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-    
+
     Returns
     -------
     xarray.DataArray
-        The prepared raster data as an xarray DataArray, optionally with a time dimension.
-    
+        The prepared raster data as an xarray DataArray, optionally with a time 
+        dimension.
+
     Raises
     ------
     ValueError
-        If enable_time_dim is True but time_col is not found in items_gdf, or if selected items have different datetime values when enable_time_dim is True.
+        If enable_time_dim is True but time_col is not found in items_gdf, or if 
+        selected items have different datetime values when enable_time_dim is True.
     """
     
     if isinstance(resampling_method, Resampling):
@@ -392,7 +391,7 @@ def query_and_prepare(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'last',
+    merge_method: Literal['last', 'first', 'min', 'max', 'mean', 'sum', 'median'] = 'last',
     resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Union[str, Dict[str, int], None] = None,
     enable_time_dim: bool = False,
@@ -406,58 +405,60 @@ def query_and_prepare(
 ) -> Union[xr.DataArray, tuple]:
     """
     Query the Planetary Computer and prepare raster data in a single step.
-    
-    This function combines a STAC API query and raster preparation pipeline. It queries
-    the Planetary Computer for items matching the given geometry, date range, and collections,
-    then reads, merges, and processes the raster data. Optionally returns the items GeoDataFrame.
-    
+
+    Combines a STAC API query and raster preparation pipeline. It queries the Planetary 
+    Computer for items matching the given geometry, date range, and collections, 
+    then reads, merges, and processes the raster data. Optionally returns the items 
+    GeoDataFrame.
+
     Parameters
     ----------
     collections : str or list of str
         Collection(s) to search within the Planetary Computer catalog.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry.
-    crs : pyproj.CRS, str, or int, default 4326
+    crs : pyproj.CRS, str or int, default=4326
         Coordinate reference system for the input/output.
-    datetime : str, default '2000-01-01/2025-01-01'
+    datetime : str, default='2000-01-01/2025-01-01'
         Date/time range for the query in ISO 8601 format or interval.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
     target_resolution : float or int, optional
         Target pixel size for the output raster in units of the CRS.
-    all_touched : bool, default False
+    all_touched : bool, default=False
         Whether to include all pixels touched by the geometry during clipping.
-    merge_method : str, default 'last'
-        Method to use when merging overlapping arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
+    merge_method : {'last', 'first', 'min', 'max', 'mean', 'sum', 'median'}, default='last'
+        Method to use when merging overlapping arrays.
+    resampling_method : rasterio.enums.Resampling or str, default='nearest'
         Resampling method to use for reprojection.
     chunks : str or dict, optional
         Chunking options for dask/xarray.
-    enable_time_dim : bool, default False
+    enable_time_dim : bool, default=False
         If True, add a time dimension to the output.
-    time_col : str, default 'properties.datetime'
+    time_col : str, default='properties.datetime'
         Column name for datetime in items_gdf.
     time_format_str : str, optional
         Format string for parsing datetime values.
-    max_workers : int, default 1
+    max_workers : int, default=1
         Number of parallel workers to use (-1 uses all available CPUs).
-    enable_progress_bar : bool, default False
+    enable_progress_bar : bool, default=False
         Whether to display a progress bar during merging.
-    return_items : bool, default False
+    return_items : bool, default=False
         If True, also return the items GeoDataFrame.
     query_kwargs : dict, optional
         Additional query parameters to pass to the STAC search.
     rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-    
+
     Returns
     -------
     xarray.DataArray or tuple
-        The prepared raster data. If return_items is True, returns a tuple of (DataArray, GeoDataFrame).
-    
+        The prepared raster data. If return_items is True, returns a tuple of 
+        (DataArray, GeoDataFrame).
+
     Notes
     -----
-    This is a convenience function that combines pc_query() and prepare_data().
+    This is a convenience function that combines pc_query() and prepare_data(). 
     For more control over the process, use those functions separately.
     """
     items_gdf = pc_query(
@@ -500,7 +501,7 @@ def prepare_timeseries(
     bands: Optional[List[Union[str, int]]] = None,
     target_resolution: Optional[float] = None,
     all_touched: bool = False,
-    merge_method: str = 'last',
+    merge_method: Literal['last', 'first', 'min', 'max', 'mean', 'sum', 'median'] = 'last',
     resampling_method: Union[Resampling, str] = 'nearest',
     chunks: Optional[Dict[str, int]] = None,
     time_col: str = 'properties.datetime',
@@ -512,48 +513,49 @@ def prepare_timeseries(
 ) -> xr.DataArray:
     """
     Prepare a time series of raster data from a GeoDataFrame of STAC items.
-    
-    This function groups items by time, reads and merges rasters for each timestep,
-    and concatenates them into a single DataArray along the time dimension. Supports
-    parallel processing and chunking for large datasets.
-    
+
+    Groups items by time, reads and merges rasters for each timestep, and concatenates 
+    them into a single DataArray along the time dimension. Supports parallel processing 
+    and chunking for large datasets.
+
     Parameters
     ----------
     items_gdf : geopandas.GeoDataFrame
         GeoDataFrame of STAC items to process.
     geometry : shapely.geometry.base.BaseGeometry
         Area of interest geometry in the target CRS.
-    crs : pyproj.CRS, str, or int, default 4326
+    crs : pyproj.CRS, str or int, default=4326
         Coordinate reference system for the output.
     bands : list of str or int, optional
         List of band names or indices to select; if None, all valid bands are loaded.
     target_resolution : float or int, optional
         Target pixel size for the output raster.
-    all_touched : bool, default False
+    all_touched : bool, default=False
         Whether to include all pixels touched by the geometry.
-    merge_method : str, default 'last'
-        Method to use when merging arrays. Options: 'last', 'first', 'min', 'max', 'mean', 'sum', 'median'.
-    resampling_method : rasterio.enums.Resampling or str, default 'nearest'
+    merge_method : {'last', 'first', 'min', 'max', 'mean', 'sum', 'median'}, default='last'
+        Method to use when merging arrays.
+    resampling_method : rasterio.enums.Resampling or str, default='nearest'
         Resampling method to use for reprojection.
     chunks : dict, optional
         Chunking options for dask/xarray.
-    time_col : str, default 'properties.datetime'
+    time_col : str, default='properties.datetime'
         Column name for datetime in items_gdf.
     time_format_str : str, optional
         Format string for parsing datetime values.
-    ignore_time_component : bool, default True
+    ignore_time_component : bool, default=True
         If True, ignore the time component and only use the date.
-    max_workers : int, default 1
+    max_workers : int, default=1
         Number of parallel workers to use (-1 uses all available CPUs).
-    enable_progress_bar : bool, default True
+    enable_progress_bar : bool, default=True
         Whether to display a progress bar during processing.
     **rioxarray_kwargs : dict, optional
         Additional keyword arguments to pass to rioxarray.open_rasterio.
-    
+
     Returns
     -------
     xarray.DataArray
-        The prepared time series raster data as an xarray DataArray with a time dimension.
+        The prepared time series raster data as an xarray DataArray with a time 
+        dimension.
     """
     
     # need to handle case where chunks is passed, may not contain all dimensions

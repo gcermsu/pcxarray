@@ -4,7 +4,9 @@ A Python package for seamless querying, downloading, and processing of Microsoft
 
 [![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
 [![Downloads](https://pepy.tech/badge/pcxarray)](https://pepy.tech/project/pcxarray)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://pcxarray.readthedocs.io/en/stable/license.html)
+[![Documentation Status](https://readthedocs.org/projects/pcxarray/badge/?version=stable)](https://pcxarray.readthedocs.io/en/stable/?badge=stable)
+![example workflow](https://github.com/gcermsu/pcxarray/actions/workflows/pypi-release.yml/badge.svg)
 [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
 
 ## Overview
@@ -195,7 +197,7 @@ Use `get_pc_collections()` to discover available collections. Note that not all 
 
 ## Complete Examples
 
-Explore these comprehensive examples in the [`examples/`](examples/) directory:
+Explore these comprehensive examples in the [`examples/`](examples/) directory of the repository:
 
 - **[`hls_timeseries.ipynb`](examples/hls_timeseries.ipynb)**: Water quality monitoring with HLS data [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
 - **[`naip.ipynb`](examples/naip.ipynb)**: NAIP imagery processing with grid creation [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/naip.ipynb)
@@ -205,12 +207,7 @@ Explore these comprehensive examples in the [`examples/`](examples/) directory:
 
 ## API Reference
 
-Documentation is currently unavailable, but each function should have descriptive docstrings and full type hints. Use python's built-in `help()` function or IDE tooltips to explore available methods and parameters.
-
-```python
-import pcxarray as pcx
-help(pcx.prepare_data)  # View function signature and docstring
-```
+Documentation can be found at [pcxarray.readthedocs.io](https://pcxarray.readthedocs.io/en/stable/).
 
 ## Known Issues
 
