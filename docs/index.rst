@@ -4,6 +4,9 @@ Welcome to ``pcxarray``'s documentation!
 .. image:: https://img.shields.io/badge/github-%23121011.svg?style=for-the-badge&logo=github&logoColor=white
    :target: https://github.com/gcermsu/pcxarray
    :alt: GitHub
+.. image:: https://readthedocs.org/projects/pcxarray/badge/?version=latest
+   :target: https://pcxarray.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
 
 .. toctree::
    :maxdepth: 2
