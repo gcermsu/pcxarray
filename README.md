@@ -4,8 +4,8 @@ A Python package for seamless querying, downloading, and processing of Microsoft
 
 [![PyPI version](https://img.shields.io/pypi/v/pcxarray.svg)](https://pypi.org/project/pcxarray/)
 [![Downloads](https://pepy.tech/badge/pcxarray)](https://pepy.tech/project/pcxarray)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://pcxarray.readthedocs.io/en/latest/license.html)
-[![Documentation Status](https://readthedocs.org/projects/pcxarray/badge/?version=latest)](https://pcxarray.readthedocs.io/en/latest/?badge=latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://pcxarray.readthedocs.io/en/stable/license.html)
+[![Documentation Status](https://readthedocs.org/projects/pcxarray/badge/?version=stable)](https://pcxarray.readthedocs.io/en/stable/?badge=stable)
 ![example workflow](https://github.com/gcermsu/pcxarray/actions/workflows/pypi-release.yml/badge.svg)
 [![Open in NBViewer](https://img.shields.io/badge/Open%20in-NBViewer-orange?logo=jupyter)](https://nbviewer.org/github/gcermsu/pcxarray/blob/main/examples/hls_timeseries.ipynb)
 
@@ -207,7 +207,7 @@ Explore these comprehensive examples in the [`examples/`](examples/) directory o
 
 ## API Reference
 
-Documentation can be found at [pcxarray.readthedocs.io](https://pcxarray.readthedocs.io/en/latest/).
+Documentation can be found at [pcxarray.readthedocs.io](https://pcxarray.readthedocs.io/en/stable/).
 
 ## Known Issues
 
