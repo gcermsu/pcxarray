@@ -49,4 +49,4 @@ autodoc_default_options = {
 # html_theme = 'alabaster'
 html_theme = "sphinx_rtd_theme"
 html_static_path = ['_static']
-html_logo = 'assets/gcer_alt.png'
+html_logo = '_static/gcer_alt.png'
