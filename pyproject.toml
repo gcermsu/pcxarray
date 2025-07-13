@@ -23,7 +23,8 @@ dependencies = [
     "xarray",
     "joblib",
     "odc-geo",
-    "bottleneck"
+    "bottleneck",
+    "dask"
 ]
 
 [project.urls]
