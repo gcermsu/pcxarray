@@ -14,6 +14,7 @@ from odc.geo.geom import Geometry
 import os
 from typing import Union
 import xarray as xr
+from pandas import notna
 
 
 
@@ -168,6 +169,7 @@ def read_single_item(
             col for col in item_gs.index \
             if col.startswith('assets.') \
             and col.endswith('.href') \
+            and notna(item_gs[col.replace('.href', '.type')]) \
             and 'image/tiff; application=geotiff; profile=cloud-optimized' in item_gs[col.replace('.href', '.type')] \
             and col not in ignored_assets
         ]
