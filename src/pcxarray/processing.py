@@ -76,6 +76,12 @@ def lazy_merge_arrays(
     UserWarning
         If reprojection fails for any input array (the array is skipped and 
         processing continues).
+        
+    Notes
+    -----
+    - TODO: At some point, consider documenting edge cases around nodata handling.
+        This seems to be the most fragile part of this package, though it's difficult
+        to really nail down all the edge cases.
     """
     
     input_dtypes = [da.dtype for da in arrays]
@@ -143,8 +149,9 @@ def lazy_merge_arrays(
     
     result = result.rio.write_nodata(nodata)
     
-    if not np.isnan(nodata):
+    if nodata is None or not np.isnan(nodata):
         result = result.fillna(nodata)
+    
     if result.dtype != input_dtype:
         result = result.astype(input_dtype)
 
