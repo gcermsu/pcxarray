@@ -149,7 +149,7 @@ def lazy_merge_arrays(
     
     result = result.rio.write_nodata(nodata)
     
-    if nodata is None or not np.isnan(nodata):
+    if nodata is not None and not np.isnan(nodata):
         result = result.fillna(nodata)
     
     if result.dtype != input_dtype:
