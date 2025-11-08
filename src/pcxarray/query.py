@@ -154,7 +154,7 @@ def pc_query(
         items.append(_flatten_dict(item_dict))
     
     if len(items) == 0:
-        warn("No items found for the given query. Returning empty GeoDataFrame.")
+        # warn("No items found for the given query. Returning empty GeoDataFrame.") # Removed due to excessive warnings in some use cases
         items_gdf = gpd.GeoDataFrame(columns=['geometry'])
     else:
         items_gdf = gpd.GeoDataFrame(items)
