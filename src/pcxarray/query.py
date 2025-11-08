@@ -138,9 +138,9 @@ def pc_query(
             break  # Exit loop if search is successful
         except Exception as e:
             if retries >= max_retries:
-                raise RuntimeError(f"STAC search failed after {max_retries} retries: {type(e).__str__}: {e}") from e
+                raise RuntimeError(f"STAC search failed after {max_retries} retries: {type(e).__name__}: {e}") from e
             
-            warn(f"STAC search failed: {type(e).__str__()}: {e}. Retrying ({retries + 1}/{max_retries})...")
+            warn(f"STAC search failed: {type(e).__name__()}: {e}. Retrying ({retries + 1}/{max_retries})...")
             sleep(2 ** (retries + 1))  # Exponential backoff
             retries += 1
     
